@@ -3,44 +3,24 @@ import { query } from "@/lib/db"
 
 export async function GET() {
   try {
-    console.log("Fetching cities...")
+    console.log("Fetching cities from database...")
 
-    // Check if database is available
+    // Check if database is configured
     if (!process.env.DB_HOST) {
-      console.log("Using fallback cities")
-      return NextResponse.json([
-        { id: 1, name: "Casablanca" },
-        { id: 2, name: "Rabat" },
-        { id: 3, name: "Marrakech" },
-        { id: 4, name: "Fes" },
-        { id: 5, name: "Tangier" },
-        { id: 6, name: "Agadir" },
-        { id: 7, name: "Meknes" },
-        { id: 8, name: "Oujda" },
-      ])
+      return NextResponse.json({ error: "Database not configured" }, { status: 500 })
     }
 
     const cities = await query("SELECT id, ville as name FROM ville ORDER BY ville")
 
-    console.log("Cities result:", cities)
+    console.log("Cities fetched:", Array.isArray(cities) ? cities.length : 0)
 
-    // Ensure we always return an array
-    const result = Array.isArray(cities) ? cities : []
+    if (!Array.isArray(cities)) {
+      throw new Error("Invalid cities data format")
+    }
 
-    return NextResponse.json(result)
+    return NextResponse.json(cities)
   } catch (error) {
     console.error("Database error in cities:", error)
-
-    // Return fallback data instead of error
-    return NextResponse.json([
-      { id: 1, name: "Casablanca" },
-      { id: 2, name: "Rabat" },
-      { id: 3, name: "Marrakech" },
-      { id: 4, name: "Fes" },
-      { id: 5, name: "Tangier" },
-      { id: 6, name: "Agadir" },
-      { id: 7, name: "Meknes" },
-      { id: 8, name: "Oujda" },
-    ])
+    return NextResponse.json({ error: "Failed to fetch cities", details: error.message }, { status: 500 })
   }
 }

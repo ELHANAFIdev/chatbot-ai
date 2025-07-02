@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Search, Loader2, Plus } from "lucide-react"
+import { X, Search, Loader2, Plus, AlertTriangle } from "lucide-react"
 
 interface SearchFormProps {
   onClose: () => void
@@ -23,44 +23,51 @@ export default function SearchForm({ onClose }: SearchFormProps) {
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [isSearching, setIsSearching] = useState(false)
   const [error, setError] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    fetchCategories()
-    fetchCities()
+    loadData()
   }, [])
+
+  const loadData = async () => {
+    setIsLoading(true)
+    await Promise.all([fetchCategories(), fetchCities()])
+    setIsLoading(false)
+  }
 
   const fetchCategories = async () => {
     try {
       setError("")
       const response = await fetch("/api/categories")
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
       const data = await response.json()
-      console.log("Categories data:", data)
 
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`)
+      }
+
+      console.log("Categories loaded:", data.length)
       setCategories(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error("Error fetching categories:", error)
-      setError("Failed to load categories")
+      setError(`Failed to load categories: ${error.message}`)
       setCategories([])
     }
   }
 
   const fetchCities = async () => {
     try {
-      setError("")
       const response = await fetch("/api/cities")
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
       const data = await response.json()
-      console.log("Cities data:", data)
 
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`)
+      }
+
+      console.log("Cities loaded:", data.length)
       setCities(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error("Error fetching cities:", error)
-      setError("Failed to load cities")
+      setError(`Failed to load cities: ${error.message}`)
       setCities([])
     }
   }
@@ -76,15 +83,17 @@ export default function SearchForm({ onClose }: SearchFormProps) {
       })
 
       const response = await fetch(`/api/search?${searchParams}`)
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
       const data = await response.json()
 
+      if (!response.ok) {
+        throw new Error(data.error || `HTTP error! status: ${response.status}`)
+      }
+
+      console.log("Search results:", data.length)
       setSearchResults(Array.isArray(data) ? data : [])
     } catch (error) {
       console.error("Error searching items:", error)
-      setError("Failed to search items")
+      setError(`Search failed: ${error.message}`)
       setSearchResults([])
     } finally {
       setIsSearching(false)
@@ -101,8 +110,27 @@ export default function SearchForm({ onClose }: SearchFormProps) {
   }
 
   const handlePostNewAd = () => {
-    const url = "https://mafqoodat.ma/draft/post.php"
+    const url = "https://mafqoodat.ma/user/publier.php"
     window.open(url, "_blank", "noopener,noreferrer")
+  }
+
+  if (isLoading) {
+    return (
+      <div className="h-full flex flex-col">
+        <div className="p-4 border-b flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Advanced Search</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-blue-600" />
+            <p className="text-gray-600">Loading search options...</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -116,7 +144,10 @@ export default function SearchForm({ onClose }: SearchFormProps) {
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">{error}</div>
+          <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm flex items-start space-x-2">
+            <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
         )}
 
         <div>
@@ -125,8 +156,9 @@ export default function SearchForm({ onClose }: SearchFormProps) {
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={categories.length === 0}
           >
-            <option value="">Select category</option>
+            <option value="">Select category ({categories.length} available)</option>
             {categories.map((category) => (
               <option key={category.id} value={category.id.toString()}>
                 {category.name}
@@ -141,8 +173,9 @@ export default function SearchForm({ onClose }: SearchFormProps) {
             value={selectedCity}
             onChange={(e) => setSelectedCity(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            disabled={cities.length === 0}
           >
-            <option value="">Select city</option>
+            <option value="">Select city ({cities.length} available)</option>
             {cities.map((city) => (
               <option key={city.id} value={city.id.toString()}>
                 {city.name}
@@ -165,29 +198,29 @@ export default function SearchForm({ onClose }: SearchFormProps) {
         <button
           onClick={handleSearch}
           className="w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center space-x-2"
-          disabled={isSearching}
+          disabled={isSearching || (categories.length === 0 && cities.length === 0)}
         >
           {isSearching ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Searching...</span>
+              <span>Searching Database...</span>
             </>
           ) : (
             <>
               <Search className="h-4 w-4" />
-              <span>Search Items</span>
+              <span>Search Database</span>
             </>
           )}
         </button>
 
         {searchResults.length > 0 && (
           <div className="space-y-3">
-            <h3 className="font-medium">Search Results ({searchResults.length}):</h3>
+            <h3 className="font-medium">Database Results ({searchResults.length}):</h3>
             {searchResults.map((item, index) => (
               <div key={index} className="bg-white border rounded-lg p-3">
                 <div className="text-sm">
                   <div className="font-medium">Item #{item.id}</div>
-                  <div className="text-gray-600 mt-1">{item.description}</div>
+                  <div className="text-gray-600 mt-1">{item.description || "No description"}</div>
 
                   <div className="mt-2 space-y-1">
                     {item.marque && (
@@ -218,8 +251,8 @@ export default function SearchForm({ onClose }: SearchFormProps) {
                   </div>
 
                   <div className="text-xs text-gray-500 mt-2 flex justify-between">
-                    <span>{item.city}</span>
-                    <span>{item.category_name}</span>
+                    <span>{item.city || "Unknown city"}</span>
+                    <span>{item.category_name || "Unknown category"}</span>
                   </div>
                   {item.postdate && <div className="text-xs text-gray-400">Posted: {formatDate(item.postdate)}</div>}
 
@@ -232,7 +265,7 @@ export default function SearchForm({ onClose }: SearchFormProps) {
                       }}
                     >
                       <Search className="h-3 w-3" />
-                      <span>View Details</span>
+                      <span>Contact</span>
                     </button>
                   </div>
                 </div>
@@ -241,9 +274,9 @@ export default function SearchForm({ onClose }: SearchFormProps) {
           </div>
         )}
 
-        {searchResults.length === 0 && !isSearching && (selectedCategory || description) && (
+        {searchResults.length === 0 && !isSearching && (selectedCategory || selectedCity || description) && (
           <div className="bg-white border rounded-lg p-4 text-center">
-            <p className="text-gray-600 mb-3">No matching items found.</p>
+            <p className="text-gray-600 mb-3">No matching items found in database.</p>
             <button
               onClick={handlePostNewAd}
               className="bg-transparent border border-gray-300 hover:bg-gray-50 text-gray-700 py-2 px-4 rounded flex items-center justify-center space-x-2 mx-auto"
@@ -262,6 +295,11 @@ export default function SearchForm({ onClose }: SearchFormProps) {
             <Plus className="h-4 w-4" />
             <span>Post New Missing Item</span>
           </button>
+        </div>
+
+        {/* Database Status */}
+        <div className="text-xs text-gray-500 text-center">
+          Database: {categories.length + cities.length > 0 ? "✅ Connected" : "❌ Not Connected"}
         </div>
       </div>
     </div>

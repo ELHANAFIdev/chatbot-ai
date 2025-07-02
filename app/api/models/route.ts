@@ -12,7 +12,7 @@ export async function GET(request: Request) {
 
     console.log("Fetching models for subcategory:", subcategoryId)
 
-    const models = await query("SELECT id, name FROM models WHERE subcategory_id = ? ORDER BY name", [
+    const models = await query("SELECT id, nom FROM souscatg WHERE subcategory_id = ? ORDER BY nom", [
       Number.parseInt(subcategoryId),
     ])
 
