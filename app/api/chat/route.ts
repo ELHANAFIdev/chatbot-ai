@@ -1,13 +1,13 @@
-import { NextResponse } from "next/server";
-import { query } from "@/lib/db";
-import { openai } from "@ai-sdk/openai";
-import { generateText } from "ai";
+import { NextResponse } from "next/server"
+import { query } from "@/lib/db"
+import { openai } from "@ai-sdk/openai"
+import { generateText } from "ai"
 
-export const maxDuration = 30;
+export const maxDuration = 30
 
 // Function to detect if user is asking about a specific item ID
 function isAskingAboutItemId(text: string) {
-  const lowerText = text.toLowerCase().trim();
+  const lowerText = text.toLowerCase().trim()
 
   // ID-related patterns in multiple languages
   const idPatterns = [
@@ -30,26 +30,26 @@ function isAskingAboutItemId(text: string) {
     /\bshow\s*me\s*(\d+)\b/,
     /\bfind\s*(\d+)\b/,
     /\bget\s*(\d+)\b/,
-  ];
+  ]
 
   for (const pattern of idPatterns) {
-    const match = lowerText.match(pattern);
+    const match = lowerText.match(pattern)
     if (match) {
       // Extract the number from the match
-      const numberId = match.find((group) => /^\d+$/.test(group));
+      const numberId = match.find((group) => /^\d+$/.test(group))
       if (numberId) {
-        return Number.parseInt(numberId);
+        return Number.parseInt(numberId)
       }
     }
   }
 
-  return null;
+  return null
 }
 
 function isSearchingForItems(text: string) {
-  const lowerText = text.toLowerCase().trim();
+  const lowerText = text.toLowerCase().trim()
 
-  const hasCity = extractCity(text) !== null;
+  const hasCity = extractCity(text) !== null
 
   const itemIndicators = [
     "phone",
@@ -73,21 +73,21 @@ function isSearchingForItems(text: string) {
     "قبعة",
     "ساعة",
     "خاتم",
-  ];
+  ]
 
-  const foundKeyword = itemIndicators.some((word) => lowerText.includes(word));
+  const foundKeyword = itemIndicators.some((word) => lowerText.includes(word))
 
-  return hasCity && foundKeyword;
+  return hasCity && foundKeyword
 }
 
 // Function to get item by ID from database
 async function getItemById(itemId: number) {
   try {
     if (!process.env.DB_HOST) {
-      throw new Error("Database not configured");
+      throw new Error("Database not configured")
     }
 
-    console.log("Fetching item by ID:", itemId);
+    console.log("Fetching item by ID:", itemId)
 
     const sql = `
       SELECT 
@@ -108,27 +108,27 @@ async function getItemById(itemId: number) {
       LEFT JOIN ville v ON f.ville = v.id
       WHERE f.id = ?
       LIMIT 1
-    `;
+    `
 
-    const results = await query(sql, [itemId]);
-    const resultArray = Array.isArray(results) ? results : [];
+    const results = await query(sql, [itemId])
+    const resultArray = Array.isArray(results) ? results : []
 
     if (resultArray.length > 0) {
-      console.log(`Item #${itemId} found:`, resultArray[0]);
-      return resultArray[0];
+      console.log(`Item #${itemId} found:`, resultArray[0])
+      return resultArray[0]
     } else {
-      console.log(`Item #${itemId} not found`);
-      return null;
+      console.log(`Item #${itemId} not found`)
+      return null
     }
   } catch (error) {
-    console.error("Database error fetching item by ID:", error);
-    throw error;
+    console.error("Database error fetching item by ID:", error)
+    throw error
   }
 }
 
 // Function to extract city from user input
 function extractCity(text: string) {
-  const lowerText = text.toLowerCase().trim();
+  const lowerText = text.toLowerCase().trim()
 
   // Moroccan cities in multiple languages and variations
   const cities = [
@@ -151,25 +151,25 @@ function extractCity(text: string) {
     { name: "الناظور", variations: ["nador", "الناظور"] },
     { name: "خريبكة", variations: ["khouribga", "خريبكة"] },
     { name: "وزان", variations: ["ouazzane", "وزان"] },
-  ];
+  ]
 
   for (const city of cities) {
     for (const variation of city.variations) {
       if (lowerText.includes(variation.toLowerCase())) {
-        return variation;
+        return variation
       }
     }
   }
 
-  return null;
+  return null
 }
 
 // Function to extract search terms for database query
 function extractSearchTerms(text: string) {
-  const cleanText = text.toLowerCase().trim();
+  const cleanText = text.toLowerCase().trim()
 
   // Extract city first
-  const city = extractCity(text);
+  const city = extractCity(text)
 
   // Remove common stop words but keep important descriptive words
   const stopWords = new Set([
@@ -214,49 +214,46 @@ function extractSearchTerms(text: string) {
     "هي",
     "في",
     "على",
-  ]);
+  ])
 
   const words = cleanText.split(/\s+/).filter((word) => {
-    const cleanWord = word.replace(/[^\w\u0600-\u06FF]/g, "");
-    return cleanWord.length > 2 && !stopWords.has(cleanWord);
-  });
+    const cleanWord = word.replace(/[^\w\u0600-\u06FF]/g, "")
+    return cleanWord.length > 2 && !stopWords.has(cleanWord)
+  })
 
   // Remove city from keywords to avoid duplication
   const keywords = words.filter((word) => {
     if (city) {
-      return (
-        !city.toLowerCase().includes(word.toLowerCase()) &&
-        !word.toLowerCase().includes(city.toLowerCase())
-      );
+      return !city.toLowerCase().includes(word.toLowerCase()) && !word.toLowerCase().includes(city.toLowerCase())
     }
-    return true;
-  });
+    return true
+  })
 
   return {
     originalText: text,
     keywords: keywords,
     city: city,
     cleanText: cleanText,
-  };
+  }
 }
 
 // Enhanced database search function with correct table structure
 async function searchDatabase(searchTerms: any) {
   try {
     if (!process.env.DB_HOST) {
-      throw new Error("Database not configured");
+      throw new Error("Database not configured")
     }
 
-    console.log("Search terms:", searchTerms);
+    console.log("Search terms:", searchTerms)
 
     if (!searchTerms.city) {
-      console.log("No city provided - search cannot proceed");
-      return { results: [], missingCity: true };
+      console.log("No city provided - search cannot proceed")
+      return { results: [], missingCity: true }
     }
 
     if (!searchTerms.keywords || searchTerms.keywords.length === 0) {
-      console.log("No keywords provided");
-      return { results: [], missingKeywords: true };
+      console.log("No keywords provided")
+      return { results: [], missingKeywords: true }
     }
 
     let sql = `
@@ -286,12 +283,12 @@ async function searchDatabase(searchTerms: any) {
       LEFT JOIN catagoery c ON f.cat_ref = c.cid
       LEFT JOIN ville v ON f.ville = v.id
       WHERE 1=1
-    `;
+    `
 
-    const params: any[] = [];
+    const params: any[] = []
 
     // Add city and pattern matches to match_count
-    const searchPattern = searchTerms.keywords.join(" ");
+    const searchPattern = searchTerms.keywords.join(" ")
     const patterns = [
       `%${searchTerms.city}%`, // ville
       `%${searchPattern}%`, // discription
@@ -300,16 +297,16 @@ async function searchDatabase(searchTerms: any) {
       `%${searchPattern}%`, // modele
       `%${searchPattern}%`, // color
       `%${searchPattern}%`, // type
-    ];
-    params.push(...patterns);
+    ]
+    params.push(...patterns)
 
     // Add keyword conditions
     if (searchTerms.keywords.length > 0) {
-      sql += ` AND (`;
-      const conditions = [];
+      sql += ` AND (`
+      const conditions = []
 
       searchTerms.keywords.forEach((keyword) => {
-        const kw = `%${keyword}%`;
+        const kw = `%${keyword}%`
         conditions.push(`(
           LOWER(f.discription) LIKE LOWER(?) OR
           LOWER(c.cname) LIKE LOWER(?) OR
@@ -317,53 +314,52 @@ async function searchDatabase(searchTerms: any) {
           LOWER(f.modele) LIKE LOWER(?) OR
           LOWER(f.color) LIKE LOWER(?) OR
           LOWER(f.type) LIKE LOWER(?)
-        )`);
-        params.push(kw, kw, kw, kw, kw, kw);
-      });
+        )`)
+        params.push(kw, kw, kw, kw, kw, kw)
+      })
 
-      sql += conditions.join(" OR ");
-      sql += `)`;
+      sql += conditions.join(" OR ")
+      sql += `)`
     }
 
-    sql += ` HAVING match_count >= 1 ORDER BY match_count DESC, f.postdate DESC LIMIT 20`;
-    console.log("🔍 Keywords used:", searchTerms.keywords);
+    sql += ` HAVING match_count >= 1 ORDER BY match_count DESC, f.postdate DESC LIMIT 20`
+    console.log("🔍 Keywords used:", searchTerms.keywords)
 
-    const results = await query(sql, params);
-    const resultArray = Array.isArray(results) ? results : [];
+    const results = await query(sql, params)
+    const resultArray = Array.isArray(results) ? results : []
 
-    console.log(`✅ Found ${resultArray.length} results`);
-    return { results: resultArray, missingCity: false, missingKeywords: false };
+    console.log(`✅ Found ${resultArray.length} results`)
+    return { results: resultArray, missingCity: false, missingKeywords: false }
   } catch (error) {
-    console.error("❌ searchDatabase error:", error);
-    throw error;
+    console.error("❌ searchDatabase error:", error)
+    throw error
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
-    const lastMessage = messages[messages.length - 1];
-    const userInput = lastMessage?.content || "";
+    const { messages } = await req.json()
+    const lastMessage = messages[messages.length - 1]
+    const userInput = lastMessage?.content || ""
 
-    console.log("Processing user input:", userInput);
+    console.log("Processing user input:", userInput)
 
     // First, check if user is asking about a specific item ID
-    const itemId = isAskingAboutItemId(userInput);
+    const itemId = isAskingAboutItemId(userInput)
     if (itemId) {
-      console.log("User asking about item ID:", itemId);
+      console.log("User asking about item ID:", itemId)
 
       // Check if database is configured
       if (!process.env.DB_HOST) {
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content:
-            "❌ Database not connected. I can't look up item details right now.",
-        });
+          content: "❌ Database not connected. I can't look up item details right now.",
+        })
       }
 
       try {
-        const item = await getItemById(itemId);
+        const item = await getItemById(itemId)
 
         if (item) {
           const response = `🎯 **Found Item #${item.id}!**
@@ -379,24 +375,20 @@ ${item.color ? `• **Color:** ${item.color}` : ""}
 ${item.type ? `• **Type:** ${item.type}` : ""}
 ${item.etat ? `• **Condition:** ${item.etat}` : ""}
 
-${
-  item.postdate
-    ? `📅 **Posted:** ${new Date(item.postdate).toLocaleDateString()}`
-    : ""
-}
+${item.postdate ? `📅 **Posted:** ${new Date(item.postdate).toLocaleDateString()}` : ""}
 
 🔗 **[Contact the Finder](https://mafqoodat.ma/trouve.php?contact=${item.id})**
 
 💡 Click the link above to get in touch with the person who found this item!
 
 ---
-*Is this your lost item? Click "Contact the Finder" to reach out to them directly.*`;
+*Is this your lost item? Click "Contact the Finder" to reach out to them directly.*`
 
           return NextResponse.json({
             id: Date.now().toString(),
             role: "assistant",
             content: response,
-          });
+          })
         } else {
           const response = `❌ **Item #${itemId} not found**
 
@@ -412,16 +404,16 @@ I couldn't find an item with ID #${itemId} in our database.
 • Browse recent items using Advanced Search
 • Post a new missing item ad
 
-💬 **Need help?** Tell me what you're looking for and I'll search our database!`;
+💬 **Need help?** Tell me what you're looking for and I'll search our database!`
 
           return NextResponse.json({
             id: Date.now().toString(),
             role: "assistant",
             content: response,
-          });
+          })
         }
       } catch (error) {
-        console.error("Error fetching item by ID:", error);
+        console.error("Error fetching item by ID:", error)
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
@@ -433,17 +425,17 @@ There was a problem accessing the database. Please try again in a moment.
 • Refresh the page and try again
 • Use the Advanced Search form
 • Search by description instead of ID`,
-        });
+        })
       }
     }
 
     // Check if user is searching for lost items
-    const isSearchQuery = isSearchingForItems(userInput);
-    console.log("Is search query:", isSearchQuery);
+    const isSearchQuery = isSearchingForItems(userInput)
+    console.log("Is search query:", isSearchQuery)
 
     if (isSearchQuery) {
       // Handle search for lost items
-      console.log("Handling search query...");
+      console.log("Handling search query...")
 
       // Check if database is configured
       if (!process.env.DB_HOST) {
@@ -452,15 +444,15 @@ There was a problem accessing the database. Please try again in a moment.
           role: "assistant",
           content:
             "❌ Database not connected. I can help with general questions, but I can't search for lost items right now. Please configure the database settings.",
-        });
+        })
       }
 
       // Extract search terms and search database
-      const searchTerms = extractSearchTerms(userInput);
-      console.log("Extracted search terms:", searchTerms);
+      const searchTerms = extractSearchTerms(userInput)
+      console.log("Extracted search terms:", searchTerms)
 
-      const searchResult = await searchDatabase(searchTerms);
-      console.log("Search result:", searchResult);
+      const searchResult = await searchDatabase(searchTerms)
+      console.log("Search result:", searchResult)
 
       // Handle missing city
       if (searchResult.missingCity) {
@@ -475,13 +467,13 @@ To find your lost item, I need to know which city you lost it in. Please tell me
 
 **Supported cities:** Rabat, Casablanca, Marrakech, Fes, Tanger, Agadir, Meknes, Oujda, Kenitra, Tetouan, and more.
 
-Please specify the city where you lost your item! 📍`;
+Please specify the city where you lost your item! 📍`
 
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content: response,
-        });
+        })
       }
 
       // Handle missing keywords
@@ -497,69 +489,48 @@ I found the city "${searchTerms.city}" but need more information about your lost
 
 **Example:** "I lost my black Samsung phone in ${searchTerms.city}"
 
-Please provide more details about your lost item! 🔍`;
+Please provide more details about your lost item! 🔍`
 
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content: response,
-        });
+        })
       }
 
-      // Handle search results
+      // Handle search results - Return both text and structured data for cards
       if (searchResult.results.length > 0) {
-        let response = `🎯 **Found ${searchResult.results.length} matching items in ${searchTerms.city}!**
+        const response = `I found ${searchResult.results.length} matching items in ${searchTerms.city}! Check the cards below for details.`
 
-`;
-
-        searchResult.results.forEach((item, index) => {
-          response += `**${index + 1}. Item #${item.id}** (${
-            item.match_count
-          } matches)\n`;
-          response += `📍 **City:** ${item.city}\n`;
-          response += `📝 **Description:** ${
-            item.description || "No description"
-          }\n`;
-
-          const details = [];
-          if (item.category_name)
-            details.push(`**Category:** ${item.category_name}`);
-          if (item.marque) details.push(`**Brand:** ${item.marque}`);
-          if (item.modele) details.push(`**Model:** ${item.modele}`);
-          if (item.color) details.push(`**Color:** ${item.color}`);
-          if (item.type) details.push(`**Type:** ${item.type}`);
-          if (item.etat) details.push(`**Condition:** ${item.etat}`);
-
-          if (details.length > 0) {
-            response += `${details.join(" • ")}\n`;
-          }
-
-          if (item.postdate) {
-            const date = new Date(item.postdate).toLocaleDateString();
-            response += `📅 **Posted:** ${date}\n`;
-          }
-
-          response += `🔗 [**Contact Finder**](https://mafqoodat.ma/draft/trouve.php?contact=${item.id})\n\n`;
-        });
-
-        response += `💡 **Click "Contact Finder" to reach the person who found your item!**
-
-🆔 **Found your item?** You can also ask me about a specific item by its ID number (e.g., "show me item 123")
-
-🆕 **Don't see your item?** [Post a new missing item ad](https://mafqoodat.ma/draft/post.php)`;
+        // Transform results into missing persons format for cards
+        const missingPersons = searchResult.results.map((item) => ({
+          id: item.id.toString(),
+          description: item.description || "No description available",
+          city: item.city || "Unknown",
+          category_name: item.category_name,
+          marque: item.marque,
+          modele: item.modele,
+          color: item.color,
+          type: item.type,
+          etat: item.etat,
+          postdate: item.postdate,
+          match_count: item.match_count,
+          contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`,
+        }))
 
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content: response,
-        });
+          missingPersons: missingPersons,
+        })
       } else {
         const response = `❌ **No matches found in ${searchTerms.city}**
 
 I searched for items matching your description in **${searchTerms.city}** but couldn't find any matches.
 
 🆕 **Create a missing item post:**
-[Post New Ad](https://mafqoodat.ma/draft/post.php)
+[Post New Ad](https://mafqoodat.ma/post.php)
 
 🔍 **Try different keywords:**
 • Be more specific about color, brand, or type
@@ -570,17 +541,17 @@ I searched for items matching your description in **${searchTerms.city}** but co
 
 💬 **Need help?** I can assist you with creating a detailed description for your post.
 
-**Remember:** The city and at least 2 matching details are required to find items in our database.`;
+**Remember:** The city and at least 2 matching details are required to find items in our database.`
 
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content: response,
-        });
+        })
       }
     } else {
       // Use ChatGPT API for general conversation
-      console.log("Using ChatGPT API for general conversation...");
+      console.log("Using ChatGPT API for general conversation...")
 
       if (!process.env.OPENAI_API_KEY) {
         return NextResponse.json({
@@ -588,7 +559,7 @@ I searched for items matching your description in **${searchTerms.city}** but co
           role: "assistant",
           content:
             "I need OpenAI API configuration to have natural conversations. For now, I can only help you search for lost items if you tell me specifically what you're looking for, or show you specific items by their ID number.",
-        });
+        })
       }
 
       try {
@@ -636,29 +607,29 @@ Be helpful and empathetic — but stay 100% focused on lost and found services o
               content: msg.content,
             })),
           ],
-        });
+        })
 
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content: text,
-        });
+        })
       } catch (error) {
-        console.error("OpenAI API error:", error);
+        console.error("OpenAI API error:", error)
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
           content:
             "I'm having trouble connecting to my AI service right now. Please try again in a moment, or let me know if you're looking for a specific lost item and I can search our database. You can also ask me about specific items by their ID number.",
-        });
+        })
       }
     }
   } catch (error) {
-    console.error("Chat API error:", error);
+    console.error("Chat API error:", error)
     return NextResponse.json({
       id: Date.now().toString(),
       role: "assistant",
       content: "Something went wrong. Please try again or refresh the page.",
-    });
+    })
   }
 }

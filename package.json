@@ -13,6 +13,7 @@
     "@ai-sdk/react": "^0.0.62",
     "@radix-ui/react-select": "^2.1.2",
     "ai": "^3.4.32",
+    "class-variance-authority": "^0.7.1",
     "lucide-react": "^0.460.0",
     "mysql2": "^3.11.3",
     "next": "15.1.0",

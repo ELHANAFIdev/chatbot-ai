@@ -2,53 +2,23 @@ import { NextResponse } from "next/server"
 import { query } from "@/lib/db"
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-
-  const categoryId = searchParams.get("categoryId")
-  const cityId = searchParams.get("cityId")
-  const description = searchParams.get("description")
-  const q = searchParams.get("q") // General search query
-
-  console.log("Search request received:", { categoryId, cityId, description, q })
-
   try {
-    // Check if database is available
+    console.log("Advanced search request received...")
+
+    // Check if database is configured
     if (!process.env.DB_HOST) {
-      console.log("Using fallback search results - no database configured")
-      return NextResponse.json([
-        {
-          id: 1,
-          description: "Lost iPhone 14 Pro Max, black color, cracked screen protector",
-          city: "Casablanca",
-          category_name: "Electronics",
-          marque: "Apple",
-          modele: "iPhone 14 Pro Max",
-          color: "Black",
-          postdate: "2024-01-15",
-        },
-        {
-          id: 2,
-          description: "Missing black leather wallet with credit cards",
-          city: "Rabat",
-          category_name: "Accessories",
-          marque: null,
-          modele: null,
-          color: "Black",
-          postdate: "2024-01-14",
-        },
-        {
-          id: 3,
-          description: "Lost Samsung Galaxy S23, blue color with clear case",
-          city: "Marrakech",
-          category_name: "Electronics",
-          marque: "Samsung",
-          modele: "Galaxy S23",
-          color: "Blue",
-          postdate: "2024-01-13",
-        },
-      ])
+      return NextResponse.json({ error: "Database not configured" }, { status: 500 })
     }
 
+    const { searchParams } = new URL(request.url)
+    const categoryId = searchParams.get("categoryId")
+    const cityId = searchParams.get("cityId")
+    const description = searchParams.get("description")
+    const subcategoryId = searchParams.get("subcategoryId")
+
+    console.log("Advanced search params:", { categoryId, cityId, description, subcategoryId })
+
+    // Build dynamic SQL query
     let sql = `
       SELECT 
         f.id,
@@ -71,44 +41,51 @@ export async function GET(request: Request) {
 
     const params: any[] = []
 
-    if (categoryId && categoryId !== "") {
-      sql += " AND f.cat_ref = ?"
+    // Add category filter
+    if (categoryId && categoryId.trim()) {
+      sql += ` AND f.cat_ref = ?`
       params.push(Number.parseInt(categoryId))
     }
 
-    if (cityId && cityId !== "") {
-      sql += " AND f.ville = ?"
+    // Add city filter
+    if (cityId && cityId.trim()) {
+      sql += ` AND f.ville = ?`
       params.push(Number.parseInt(cityId))
     }
 
-    if (description || q) {
-      const searchTerm = description || q
-      sql += " AND (f.discription LIKE ? OR f.marque LIKE ? OR f.modele LIKE ? OR f.type LIKE ?)"
-      params.push(`%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`, `%${searchTerm}%`)
+    // Add subcategory filter
+    if (subcategoryId && subcategoryId.trim()) {
+      sql += ` AND f.souscatg_id = ?`
+      params.push(Number.parseInt(subcategoryId))
     }
 
-    sql += " ORDER BY f.postdate DESC LIMIT 20"
+    // Add description/brand/model filter
+    if (description && description.trim()) {
+      sql += ` AND (
+        LOWER(f.discription) LIKE LOWER(?) OR
+        LOWER(f.marque) LIKE LOWER(?) OR
+        LOWER(f.modele) LIKE LOWER(?) OR
+        LOWER(f.type) LIKE LOWER(?) OR
+        LOWER(f.color) LIKE LOWER(?)
+      )`
+      const searchTerm = `%${description.trim()}%`
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+    }
 
-    console.log("Executing search query...")
+    sql += ` ORDER BY f.postdate DESC LIMIT 50`
+
+    console.log("Executing advanced search query with params:", params.length)
     const results = await query(sql, params)
-    console.log("Search completed, results count:", Array.isArray(results) ? results.length : 0)
 
-    return NextResponse.json(Array.isArray(results) ? results : [])
-  } catch (error) {
-    console.error("Search API error:", error)
+    if (!Array.isArray(results)) {
+      throw new Error("Invalid search results data format")
+    }
 
-    // Return fallback data instead of error
-    return NextResponse.json([
-      {
-        id: 1,
-        description: "Sample lost item - iPhone",
-        city: "Casablanca",
-        category_name: "Electronics",
-        marque: "Apple",
-        modele: "iPhone",
-        color: "Black",
-        postdate: "2024-01-15",
-      },
-    ])
+    console.log(`✅ Advanced search found ${results.length} results`)
+
+    return NextResponse.json(results)
+  } catch (error: any) {
+    console.error("❌ Advanced search API error:", error)
+    return NextResponse.json({ error: "Search failed", details: error.message }, { status: 500 })
   }
 }

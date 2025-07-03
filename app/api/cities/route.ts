@@ -19,7 +19,7 @@ export async function GET() {
     }
 
     return NextResponse.json(cities)
-  } catch (error) {
+  } catch (error: any) {
     console.error("Database error in cities:", error)
     return NextResponse.json({ error: "Failed to fetch cities", details: error.message }, { status: 500 })
   }

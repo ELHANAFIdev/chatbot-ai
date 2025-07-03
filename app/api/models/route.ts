@@ -17,13 +17,9 @@ export async function GET(request: Request) {
 
     console.log("Fetching souscatg for category (id_mere):", categoryIdNum)
 
-    const souscategories = await query(
-      "SELECT id, nom FROM souscatg WHERE id_mere = ? ORDER BY nom",
-      [categoryIdNum]
-    )
+    const souscategories = await query("SELECT id, nom FROM souscatg WHERE id_mere = ? ORDER BY nom", [categoryIdNum])
 
     const result = Array.isArray(souscategories) ? souscategories : []
-
     return NextResponse.json(result)
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error)
