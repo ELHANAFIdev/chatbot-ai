@@ -5,173 +5,502 @@ import { generateText } from "ai"
 
 export const maxDuration = 30
 
-// Function to detect if user is asking about a specific item ID
-function isAskingAboutItemId(text: string) {
+// Enhanced language detection with better French support
+function detectLanguage(text: string): "ar" | "fr" | "en" {
   const lowerText = text.toLowerCase().trim()
+  console.log("🗣️ Detecting language for:", lowerText)
 
-  // ID-related patterns in multiple languages
-  const idPatterns = [
-    // English
-    /\b(item|id|number|#)\s*(\d+)\b/,
-    /\b(\d+)\s*(item|id|number)\b/,
-    /\bitem\s*#?\s*(\d+)\b/,
-    /\bid\s*:?\s*(\d+)\b/,
-    /\bnumber\s*:?\s*(\d+)\b/,
-    // French
-    /\b(objet|article|numéro|id)\s*(\d+)\b/,
-    /\b(\d+)\s*(objet|article|numéro|id)\b/,
-    /\bobjet\s*#?\s*(\d+)\b/,
-    /\bnuméro\s*:?\s*(\d+)\b/,
-    // Arabic
-    /\b(رقم|معرف|عنصر)\s*(\d+)\b/,
-    /\b(\d+)\s*(رقم|معرف|عنصر)\b/,
-    // General patterns
-    /^#?\s*(\d+)$/, // Just a number
-    /\bshow\s*me\s*(\d+)\b/,
-    /\bfind\s*(\d+)\b/,
-    /\bget\s*(\d+)\b/,
+  // Arabic detection (highest priority)
+  if (/[\u0600-\u06FF]/.test(text)) {
+    console.log("✅ Detected: Arabic")
+    return "ar"
+  }
+
+  // Enhanced French detection
+  const frenchIndicators = [
+    "je",
+    "j'ai",
+    "tu",
+    "il",
+    "elle",
+    "nous",
+    "vous",
+    "ils",
+    "elles",
+    "mon",
+    "ma",
+    "mes",
+    "ton",
+    "ta",
+    "tes",
+    "son",
+    "sa",
+    "ses",
+    "le",
+    "la",
+    "les",
+    "un",
+    "une",
+    "des",
+    "du",
+    "de",
+    "dans",
+    "à",
+    "avec",
+    "pour",
+    "sur",
+    "par",
+    "sans",
+    "sous",
+    "perdu",
+    "perdue",
+    "cherche",
+    "trouve",
+    "trouvé",
+    "téléphone",
+    "portable",
+    "sac",
+    "clé",
+    "clés",
+    "portefeuille",
+    "lunettes",
+    "chien",
+    "chat",
+    "où",
+    "quand",
+    "comment",
+    "pourquoi",
+    "c'est",
+    "qu'il",
+    "qu'elle",
   ]
 
-  for (const pattern of idPatterns) {
-    const match = lowerText.match(pattern)
+  // English indicators
+  const englishIndicators = [
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "my",
+    "your",
+    "his",
+    "her",
+    "the",
+    "a",
+    "an",
+    "in",
+    "at",
+    "on",
+    "with",
+    "for",
+    "and",
+    "or",
+    "lost",
+    "find",
+    "search",
+    "looking",
+    "missing",
+    "found",
+    "phone",
+    "bag",
+    "key",
+    "keys",
+    "wallet",
+    "glasses",
+    "dog",
+    "cat",
+    "where",
+    "when",
+    "what",
+    "how",
+    "is",
+    "was",
+    "have",
+    "do",
+    "will",
+    "can",
+  ]
+
+  let frenchScore = 0
+  let englishScore = 0
+
+  for (const indicator of frenchIndicators) {
+    if (lowerText.includes(indicator)) {
+      const weight = ["j'ai", "où", "c'est", "téléphone", "perdu"].includes(indicator) ? 2 : 1
+      frenchScore += weight
+    }
+  }
+
+  for (const indicator of englishIndicators) {
+    if (lowerText.includes(indicator)) {
+      englishScore++
+    }
+  }
+
+  console.log(`📊 Language scores - French: ${frenchScore}, English: ${englishScore}`)
+
+  if (frenchScore > englishScore) {
+    console.log("✅ Detected: French")
+    return "fr"
+  } else if (frenchScore === englishScore && frenchScore > 0) {
+    console.log("✅ Detected: French (preference)")
+    return "fr"
+  } else if (englishScore > 0) {
+    console.log("✅ Detected: English")
+    return "en"
+  }
+
+  console.log("✅ Detected: French (default)")
+  return "fr"
+}
+
+// Function to detect if user is asking about a specific item ID
+function isAskingAboutItemId(text: string) {
+  const patterns = [
+    /\b(item|objet|id|number|numéro|#)\s*(\d+)\b/i,
+    /\b(\d+)\s*(item|objet|id|number|numéro)\b/i,
+    /^#?\s*(\d+)$/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
     if (match) {
-      // Extract the number from the match
       const numberId = match.find((group) => /^\d+$/.test(group))
       if (numberId) {
         return Number.parseInt(numberId)
       }
     }
   }
-
   return null
 }
 
-function isSearchingForItems(text: string) {
-  const lowerText = text.toLowerCase().trim()
+// Dictionnaire de traduction vers le français
+const translationDictionary = {
+  // Electronics - Électronique
+  phone: "téléphone",
+  smartphone: "téléphone",
+  mobile: "téléphone",
+  هاتف: "téléphone",
+  laptop: "ordinateur",
+  computer: "ordinateur",
+  pc: "ordinateur",
+  حاسوب: "ordinateur",
+  كمبيوتر: "ordinateur",
+  tablet: "tablette",
+  لوحي: "tablette",
+  تابلت: "tablette",
 
-  const hasCity = extractCity(text) !== null
+  // Personal items - Objets personnels
+  wallet: "portefeuille",
+  محفظة: "portefeuille",
+  key: "clé",
+  keys: "clés",
+  مفتاح: "clé",
+  مفاتيح: "clés",
+  bag: "sac",
+  حقيبة: "sac",
+  backpack: "sac",
+  watch: "montre",
+  ساعة: "montre",
+  glasses: "lunettes",
+  نظارات: "lunettes",
+  ring: "bague",
+  خاتم: "bague",
 
-  const itemIndicators = [
-    // Electronics / Électronique
-    "phone",
-    "téléphone",
-    "هاتف",
-    "smartphone",
-    "mobile",
-    "laptop",
-    "ordinateur",
-    "حاسوب",
-    "computer",
-    "tablet",
-    "tablette",
-    "لوحي",
+  // Animals - Animaux
+  dog: "chien",
+  كلب: "chien",
+  cat: "chat",
+  قط: "chat",
+  pet: "animal",
+  حيوان: "animal",
 
-    // Personal items / Objets personnels
-    "wallet",
-    "portefeuille",
-    "محفظة",
-    "purse",
-    "sac",
-    "key",
-    "clé",
-    "clés",
-    "مفتاح",
-    "keys",
-    "bag",
-    "sac",
-    "حقيبة",
-    "backpack",
-    "sac à dos",
-    "watch",
-    "montre",
-    "ساعة",
-    "ring",
-    "bague",
-    "خاتم",
-    "glasses",
-    "lunettes",
-    "نظارات",
+  // Documents
+  passport: "passeport",
+  جواز: "passeport",
+  card: "carte",
+  بطاقة: "carte",
+  document: "document",
+  وثيقة: "document",
 
-    // Clothing / Vêtements
-    "hat",
-    "cap",
-    "casquette",
-    "قبعة",
-    "chapeau",
-    "jacket",
-    "veste",
-    "سترة",
-    "shoes",
-    "chaussures",
-    "حذاء",
+  // Other items - Autres objets
+  umbrella: "parapluie",
+  مظلة: "parapluie",
+  bicycle: "vélo",
+  bike: "vélo",
+  دراجة: "vélo",
+  book: "livre",
+  كتاب: "livre",
+  money: "argent",
+  مال: "argent",
 
-    // Animals / Animaux
-    "dog",
-    "chien",
-    "كلب",
-    "cat",
-    "chat",
-    "قط",
-    "قطة",
-    "bird",
-    "oiseau",
-    "طائر",
-    "pet",
-    "animal",
-    "حيوان",
+  // Cities - Villes
+  casa: "casablanca",
+  "الدار البيضاء": "casablanca",
+  الرباط: "rabat",
+  مراكش: "marrakech",
+  marrakesh: "marrakech",
+  فاس: "fes",
+  fez: "fes",
+  طنجة: "tanger",
+  tangier: "tanger",
+  أغادير: "agadir",
+  مكناس: "meknes",
+  وجدة: "oujda",
+  القنيطرة: "kenitra",
+  تطوان: "tetouan",
 
-    // Documents
-    "passport",
-    "passeport",
-    "جواز",
-    "card",
-    "carte",
-    "بطاقة",
-    "license",
-    "permis",
-    "رخصة",
-    "document",
-    "documents",
-    "وثيقة",
+  // Colors - Couleurs
+  black: "noir",
+  white: "blanc",
+  red: "rouge",
+  blue: "bleu",
+  green: "vert",
+  yellow: "jaune",
+  أسود: "noir",
+  أبيض: "blanc",
+  أحمر: "rouge",
+  أزرق: "bleu",
+  أخضر: "vert",
+  أصفر: "jaune",
 
-    // Jewelry / Bijoux
-    "necklace",
-    "collier",
-    "قلادة",
-    "bracelet",
-    "سوار",
-    "earring",
-    "boucle",
-    "قرط",
+  // Brands - Marques (keep as is but add common variations)
+  iphone: "apple",
+  آيفون: "apple",
 
-    // Other common items / Autres objets courants
-    "umbrella",
-    "parapluie",
-    "مظلة",
-    "bicycle",
-    "vélo",
-    "دراجة",
-    "toy",
-    "jouet",
-    "لعبة",
-    "book",
-    "livre",
-    "كتاب",
-  ]
-
-  const foundKeyword = itemIndicators.some((word) => lowerText.includes(word))
-
-  return hasCity && foundKeyword
+  // Actions - Actions
+  lost: "perdu",
+  find: "trouve",
+  search: "cherche",
+  looking: "cherche",
+  missing: "perdu",
+  found: "trouvé",
 }
 
-// Function to get item by ID from database
+// Fonction pour convertir les mots en français
+function translateToFrench(text: string): string {
+  let translatedText = text.toLowerCase()
+
+  console.log("🔄 Original text:", text)
+
+  // Replace each word/phrase with its French equivalent
+  for (const [original, french] of Object.entries(translationDictionary)) {
+    const regex = new RegExp(`\\b${original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi")
+    if (translatedText.includes(original.toLowerCase())) {
+      translatedText = translatedText.replace(regex, french)
+      console.log(`🔄 Translated "${original}" → "${french}"`)
+    }
+  }
+
+  console.log("✅ Final translated text:", translatedText)
+  return translatedText
+}
+
+// Fonction simplifiée pour extraire les mots-clés (maintenant en français)
+function extractItemKeywords(text: string) {
+  // D'abord traduire le texte en français
+  const translatedText = translateToFrench(text)
+  const lowerText = translatedText.toLowerCase()
+
+  // Mots-clés français pour les objets
+  const frenchItems = [
+    "téléphone",
+    "portable",
+    "ordinateur",
+    "tablette",
+    "portefeuille",
+    "clé",
+    "clés",
+    "sac",
+    "montre",
+    "lunettes",
+    "bague",
+    "chien",
+    "chat",
+    "animal",
+    "passeport",
+    "carte",
+    "document",
+    "parapluie",
+    "vélo",
+    "livre",
+    "argent",
+  ]
+
+  // Marques qui indiquent généralement des appareils électroniques
+  const brandNames = [
+    "samsung",
+    "apple",
+    "huawei",
+    "xiaomi",
+    "nokia",
+    "sony",
+    "lg",
+    "motorola",
+    "oneplus",
+    "oppo",
+    "vivo",
+    "realme",
+  ]
+
+  const foundItems = []
+
+  // Chercher les objets français
+  for (const item of frenchItems) {
+    if (lowerText.includes(item)) {
+      foundItems.push(item)
+    }
+  }
+
+  // Chercher les marques
+  const foundBrands = brandNames.filter((brand) => lowerText.includes(brand))
+  if (foundBrands.length > 0 && foundItems.length === 0) {
+    foundItems.push("téléphone") // Assume it's a phone if only brand is mentioned
+  }
+
+  // Ajouter les marques trouvées
+  foundItems.push(...foundBrands)
+
+  console.log("📱 Extracted French keywords:", foundItems)
+  return [...new Set(foundItems)] // Remove duplicates
+}
+
+// Fonction simplifiée pour extraire les villes (maintenant en français)
+function extractCities(text: string) {
+  // D'abord traduire le texte en français
+  const translatedText = translateToFrench(text)
+  const lowerText = translatedText.toLowerCase()
+
+  // Villes françaises
+  const frenchCities = [
+    "rabat",
+    "casablanca",
+    "marrakech",
+    "fes",
+    "tanger",
+    "agadir",
+    "meknes",
+    "oujda",
+    "kenitra",
+    "tetouan",
+  ]
+
+  const foundCities = []
+
+  for (const city of frenchCities) {
+    if (lowerText.includes(city)) {
+      foundCities.push(city)
+    }
+  }
+
+  console.log("🏙️ Extracted French cities:", foundCities)
+  return [...new Set(foundCities)] // Remove duplicates
+}
+
+// Enhanced function to analyze conversation context
+function analyzeConversationContext(messages: any[]) {
+  let lastUserMessage = ""
+  let lastAssistantMessage = ""
+  const conversationItems = []
+  const conversationCities = []
+  let userLanguage = "fr" // Default to French
+
+  const recentMessages = messages.slice(-4)
+
+  for (const message of recentMessages) {
+    if (message.role === "user") {
+      lastUserMessage = message.content
+      userLanguage = detectLanguage(message.content)
+      const items = extractItemKeywords(message.content)
+      const cities = extractCities(message.content)
+      conversationItems.push(...items)
+      conversationCities.push(...cities)
+    } else if (message.role === "assistant") {
+      lastAssistantMessage = message.content
+    }
+  }
+
+  // Check if this is a new search
+  const currentItems = extractItemKeywords(lastUserMessage)
+  const currentCities = extractCities(lastUserMessage)
+  const currentLanguage = detectLanguage(lastUserMessage)
+
+  const isNewSearch =
+    currentItems.length > 0 &&
+    currentCities.length === 0 &&
+    (lastAssistantMessage.includes("matching items") ||
+      lastAssistantMessage.includes("objets correspondants") ||
+      lastAssistantMessage.includes("عناصر مطابقة") ||
+      lastAssistantMessage.includes("No matches found") ||
+      lastAssistantMessage.includes("Aucune correspondance") ||
+      lastAssistantMessage.includes("لم يتم العثور"))
+
+  const isWaitingForCity =
+    lastAssistantMessage.includes("City is required") ||
+    lastAssistantMessage.includes("Ville requise") ||
+    lastAssistantMessage.includes("المدينة مطلوبة") ||
+    lastAssistantMessage.includes("city you lost it in") ||
+    lastAssistantMessage.includes("ville vous l'avez perdu") ||
+    lastAssistantMessage.includes("quelle ville") ||
+    lastAssistantMessage.includes("which city")
+
+  const isWaitingForDetails =
+    lastAssistantMessage.includes("More details needed") ||
+    lastAssistantMessage.includes("Plus de détails") ||
+    lastAssistantMessage.includes("تفاصيل أكثر") ||
+    lastAssistantMessage.includes("need more information") ||
+    lastAssistantMessage.includes("plus d'informations")
+
+  return {
+    lastUserMessage,
+    lastAssistantMessage,
+    conversationItems: isNewSearch ? currentItems : [...new Set(conversationItems)],
+    conversationCities: isNewSearch ? currentCities : [...new Set(conversationCities)],
+    isWaitingForCity,
+    isWaitingForDetails,
+    userLanguage: currentLanguage,
+    isNewSearch,
+  }
+}
+
+// Check if user is searching for items
+function isSearchingForItems(text: string, context: any = null) {
+  // Check context first
+  if (context) {
+    if (context.isWaitingForCity && context.conversationItems.length > 0) {
+      const cities = extractCities(text)
+      if (cities.length > 0) return true
+    }
+
+    if (context.isWaitingForDetails && context.conversationCities.length > 0) {
+      const items = extractItemKeywords(text)
+      if (items.length > 0) return true
+    }
+
+    if (context.conversationItems.length > 0 && extractCities(text).length > 0) {
+      return true
+    }
+
+    if (context.conversationCities.length > 0 && extractItemKeywords(text).length > 0) {
+      return true
+    }
+  }
+
+  // Check current message
+  const hasCity = extractCities(text).length > 0
+  const hasItem = extractItemKeywords(text).length > 0
+
+  return hasCity && hasItem
+}
+
+// Get item by ID
 async function getItemById(itemId: number) {
   try {
     if (!process.env.DB_HOST) {
       throw new Error("Database not configured")
     }
-
-    console.log("Fetching item by ID:", itemId)
 
     const sql = `
       SELECT 
@@ -196,148 +525,76 @@ async function getItemById(itemId: number) {
 
     const results = await query(sql, [itemId])
     const resultArray = Array.isArray(results) ? results : []
-
-    if (resultArray.length > 0) {
-      console.log(`Item #${itemId} found:`, resultArray[0])
-      return resultArray[0]
-    } else {
-      console.log(`Item #${itemId} not found`)
-      return null
-    }
+    return resultArray.length > 0 ? resultArray[0] : null
   } catch (error) {
-    console.error("Database error fetching item by ID:", error)
+    console.error("Database error:", error)
     throw error
   }
 }
 
-// Function to extract city from user input
-function extractCity(text: string) {
-  const lowerText = text.toLowerCase().trim()
+// Extract search terms with context
+function extractSearchTerms(text: string, context: any = null) {
+  let city = extractCities(text)[0] || null
+  let keywords = extractItemKeywords(text)
 
-  // Moroccan cities in multiple languages and variations
-  const cities = [
-    // Arabic names
-    { name: "الرباط", variations: ["rabat", "الرباط"] },
-    {
-      name: "الدار البيضاء",
-      variations: ["casablanca", "casa", "الدار البيضاء", "الدارالبيضاء"],
-    },
-    { name: "مراكش", variations: ["marrakech", "marrakesh", "مراكش"] },
-    { name: "سلا", variations: ["sale", "salé", "سلا"] },
-    { name: "فاس", variations: ["fes", "fez", "فاس"] },
-    { name: "طنجة", variations: ["tanger", "tangier", "طنجة"] },
-    { name: "أغادير", variations: ["agadir", "أغادير"] },
-    { name: "مكناس", variations: ["meknes", "مكناس"] },
-    { name: "وجدة", variations: ["oujda", "وجدة"] },
-    { name: "القنيطرة", variations: ["kenitra", "القنيطرة"] },
-    { name: "تطوان", variations: ["tetouan", "تطوان"] },
-    { name: "الجديدة", variations: ["el jadida", "الجديدة"] },
-    { name: "بني ملال", variations: ["beni mellal", "بني ملال"] },
-    { name: "الناظور", variations: ["nador", "الناظور"] },
-    { name: "خريبكة", variations: ["khouribga", "خريبكة"] },
-    { name: "وزان", variations: ["ouazzane", "وزان"] },
-  ]
+  // Only use context if it's not a new search AND we're missing info
+  if (!context?.isNewSearch) {
+    if (!city && context?.conversationCities.length > 0) {
+      city = context.conversationCities[0]
+    }
 
-  for (const city of cities) {
-    for (const variation of city.variations) {
-      if (lowerText.includes(variation.toLowerCase())) {
-        return variation
-      }
+    if (keywords.length === 0 && context?.conversationItems.length > 0) {
+      keywords = context.conversationItems
     }
   }
-
-  return null
-}
-
-// Function to extract search terms for database query
-function extractSearchTerms(text: string) {
-  const cleanText = text.toLowerCase().trim()
-
-  // Extract city first
-  const city = extractCity(text)
-
-  // Remove common stop words but keep important descriptive words
-  const stopWords = new Set([
-    "i",
-    "me",
-    "my",
-    "lost",
-    "find",
-    "search",
-    "looking",
-    "help",
-    "where",
-    "is",
-    "the",
-    "a",
-    "an",
-    "in",
-    "at",
-    "on",
-    "je",
-    "mon",
-    "ma",
-    "perdu",
-    "cherche",
-    "trouve",
-    "où",
-    "est",
-    "le",
-    "la",
-    "les",
-    "un",
-    "une",
-    "dans",
-    "à",
-    "sur",
-    "أنا",
-    "لي",
-    "فقدت",
-    "أبحث",
-    "أين",
-    "هو",
-    "هي",
-    "في",
-    "على",
-  ])
-
-  const words = cleanText.split(/\s+/).filter((word) => {
-    const cleanWord = word.replace(/[^\w\u0600-\u06FF]/g, "")
-    return cleanWord.length > 2 && !stopWords.has(cleanWord)
-  })
-
-  // Remove city from keywords to avoid duplication
-  const keywords = words.filter((word) => {
-    if (city) {
-      return !city.toLowerCase().includes(word.toLowerCase()) && !word.toLowerCase().includes(city.toLowerCase())
-    }
-    return true
-  })
 
   return {
     originalText: text,
     keywords: keywords,
     city: city,
-    cleanText: cleanText,
   }
 }
 
-// Enhanced database search function with correct table structure
+// Generate multilingual responses
+function generateResponse(type: string, data: any, language: string) {
+  const responses = {
+    missingCity: {
+      ar: `🏙️ **المدينة مطلوبة للبحث!**\n\nللعثور على العنصر المفقود، أحتاج إلى معرفة المدينة:\n\n**مثال:** "فقدت هاتفي في الدار البيضاء"\n\n**المدن:** الرباط، الدار البيضاء، مراكش، فاس، طنجة، أغادير\n\nيرجى تحديد المدينة! 📍`,
+      fr: `🏙️ **Ville requise pour la recherche !**\n\nPour trouver votre objet perdu, j'ai besoin de savoir dans quelle ville :\n\n**Exemple :** "J'ai perdu mon téléphone à Casablanca"\n\n**Villes :** Rabat, Casablanca, Marrakech, Fès, Tanger, Agadir\n\nVeuillez spécifier la ville où vous avez perdu votre objet ! 📍`,
+      en: `🏙️ **City is required for search!**\n\nTo find your lost item, I need to know the city:\n\n**Example:** "I lost my phone in Casablanca"\n\n**Cities:** Rabat, Casablanca, Marrakech, Fes, Tanger, Agadir\n\nPlease specify the city! 📍`,
+    },
+    missingDetails: {
+      ar: `📝 **تفاصيل أكثر مطلوبة!**\n\nوجدت المدينة "${data.city}" لكن أحتاج مزيد من المعلومات:\n\n• **ما هو العنصر؟** (هاتف، محفظة، مفاتيح)\n• **اللون؟** (أسود، أبيض، أحمر)\n• **العلامة التجارية؟** (سامسونغ، آبل)\n\n**مثال:** "فقدت هاتف سامسونغ أسود في ${data.city}"\n\nيرجى المزيد من التفاصيل! 🔍`,
+      fr: `📝 **Plus de détails nécessaires !**\n\nJ'ai trouvé la ville "${data.city}" mais j'ai besoin de plus d'informations :\n\n• **Quel objet ?** (téléphone, portefeuille, clés)\n• **Couleur ?** (noir, blanc, rouge)\n• **Marque ?** (Samsung, Apple)\n\n**Exemple :** "J'ai perdu mon téléphone Samsung noir à ${data.city}"\n\nVeuillez fournir plus de détails ! 🔍`,
+      en: `📝 **More details needed!**\n\nI found the city "${data.city}" but need more information:\n\n• **What item?** (phone, wallet, keys)\n• **Color?** (black, white, red)\n• **Brand?** (Samsung, Apple)\n\n**Example:** "I lost my black Samsung phone in ${data.city}"\n\nPlease provide more details! 🔍`,
+    },
+    searchResults: {
+      ar: `وجدت ${data.count} عناصر مطابقة في ${data.city}! تحقق من البطاقات أدناه.`,
+      fr: `J'ai trouvé ${data.count} objets correspondants à ${data.city} ! Consultez les cartes ci-dessous.`,
+      en: `I found ${data.count} matching items in ${data.city}! Check the cards below.`,
+    },
+    noResults: {
+      ar: `❌ **لم يتم العثور على مطابقات في ${data.city}**\n\n🆕 **إنشاء إعلان:**\n[نشر إعلان جديد](https://mafqoodat.ma/post.php)\n\n🔍 **جرب كلمات مختلفة**`,
+      fr: `❌ **Aucune correspondance trouvée à ${data.city}**\n\n🆕 **Créer une annonce :**\n[Publier une nouvelle annonce](https://mafqoodat.ma/post.php)\n\n🔍 **Essayez différents mots-clés**`,
+      en: `❌ **No matches found in ${data.city}**\n\n🆕 **Create a post:**\n[Post New Ad](https://mafqoodat.ma/post.php)\n\n🔍 **Try different keywords**`,
+    },
+  }
+
+  return responses[type]?.[language] || responses[type]?.fr || "Erreur de génération de réponse"
+}
+
+// Recherche simplifiée dans la base de données (maintenant uniquement en français)
 async function searchDatabase(searchTerms: any) {
   try {
     if (!process.env.DB_HOST) {
       throw new Error("Database not configured")
     }
 
-    console.log("Search terms:", searchTerms)
-
     if (!searchTerms.city) {
-      console.log("No city provided - search cannot proceed")
       return { results: [], missingCity: true }
     }
 
     if (!searchTerms.keywords || searchTerms.keywords.length === 0) {
-      console.log("No keywords provided")
       return { results: [], missingKeywords: true }
     }
 
@@ -354,38 +611,20 @@ async function searchDatabase(searchTerms: any) {
         f.etat,
         f.postdate,
         c.cname as category_name,
-        v.ville as city,
-        (
-          CASE WHEN LOWER(v.ville) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(f.discription) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(c.cname) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(f.marque) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(f.modele) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(f.color) LIKE LOWER(?) THEN 1 ELSE 0 END +
-          CASE WHEN LOWER(f.type) LIKE LOWER(?) THEN 1 ELSE 0 END
-        ) as match_count
+        v.ville as city
       FROM fthings f
       LEFT JOIN catagoery c ON f.cat_ref = c.cid
       LEFT JOIN ville v ON f.ville = v.id
       WHERE 1=1
     `
 
-    const params: any[] = []
+    const params = []
 
-    // Add city and pattern matches to match_count
-    const searchPattern = searchTerms.keywords.join(" ")
-    const patterns = [
-      `%${searchTerms.city}%`, // ville
-      `%${searchPattern}%`, // discription
-      `%${searchPattern}%`, // category
-      `%${searchPattern}%`, // marque
-      `%${searchPattern}%`, // modele
-      `%${searchPattern}%`, // color
-      `%${searchPattern}%`, // type
-    ]
-    params.push(...patterns)
+    // Add city filter (now searching for French city names)
+    sql += ` AND LOWER(v.ville) LIKE LOWER(?)`
+    params.push(`%${searchTerms.city}%`)
 
-    // Add keyword conditions
+    // Add keyword conditions (now searching with French keywords)
     if (searchTerms.keywords.length > 0) {
       sql += ` AND (`
       const conditions = []
@@ -407,16 +646,20 @@ async function searchDatabase(searchTerms: any) {
       sql += `)`
     }
 
-    sql += ` HAVING match_count >= 1 ORDER BY match_count DESC, f.postdate DESC LIMIT 20`
-    console.log("🔍 Keywords used:", searchTerms.keywords)
+    sql += ` ORDER BY f.postdate DESC LIMIT 20`
+
+    console.log("🔍 Executing French-normalized search")
+    console.log("🏙️ City:", searchTerms.city)
+    console.log("📱 Keywords:", searchTerms.keywords)
 
     const results = await query(sql, params)
     const resultArray = Array.isArray(results) ? results : []
 
-    console.log(`✅ Found ${resultArray.length} results`)
+    console.log(`✅ Found ${resultArray.length} results with French search`)
+
     return { results: resultArray, missingCity: false, missingKeywords: false }
   } catch (error) {
-    console.error("❌ searchDatabase error:", error)
+    console.error("Database search error:", error)
     throw error
   }
 }
@@ -427,19 +670,30 @@ export async function POST(req: Request) {
     const lastMessage = messages[messages.length - 1]
     const userInput = lastMessage?.content || ""
 
-    console.log("Processing user input:", userInput)
+    console.log("🔍 Processing user input:", userInput)
 
-    // First, check if user is asking about a specific item ID
+    // Analyze conversation context
+    const context = analyzeConversationContext(messages)
+    console.log("📋 Context:", {
+      userLanguage: context.userLanguage,
+      isNewSearch: context.isNewSearch,
+      conversationItems: context.conversationItems,
+      conversationCities: context.conversationCities,
+    })
+
+    // Check if user is asking about a specific item ID
     const itemId = isAskingAboutItemId(userInput)
     if (itemId) {
-      console.log("User asking about item ID:", itemId)
-
-      // Check if database is configured
       if (!process.env.DB_HOST) {
+        const errorMessages = {
+          ar: "❌ قاعدة البيانات غير متصلة. لا يمكنني البحث عن تفاصيل العناصر الآن.",
+          fr: "❌ Base de données non connectée. Je ne peux pas rechercher les détails des objets pour le moment.",
+          en: "❌ Database not connected. I can't search for item details right now.",
+        }
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content: "❌ Database not connected. I can't look up item details right now.",
+          content: errorMessages[context.userLanguage] || errorMessages.fr,
         })
       }
 
@@ -447,113 +701,69 @@ export async function POST(req: Request) {
         const item = await getItemById(itemId)
 
         if (item) {
-          const response = `🎯 **Found Item #${item.id}!**
-
-📍 **City:** ${item.city || "Unknown"}
-📝 **Description:** ${item.description || "No description available"}
-
-**Details:**
-${item.category_name ? `• **Category:** ${item.category_name}` : ""}
-${item.marque ? `• **Brand:** ${item.marque}` : ""}
-${item.modele ? `• **Model:** ${item.modele}` : ""}
-${item.color ? `• **Color:** ${item.color}` : ""}
-${item.type ? `• **Type:** ${item.type}` : ""}
-${item.etat ? `• **Condition:** ${item.etat}` : ""}
-
-${item.postdate ? `📅 **Posted:** ${new Date(item.postdate).toLocaleDateString()}` : ""}
-
-🔗 **[Contact the Finder](https://mafqoodat.ma/trouve.php?contact=${item.id})**
-
-💡 Click the link above to get in touch with the person who found this item!
-
----
-*Is this your lost item? Click "Contact the Finder" to reach out to them directly.*`
+          const responses = {
+            ar: `🎯 **تم العثور على العنصر #${item.id}!**\n\n📍 **المدينة:** ${item.city || "غير معروفة"}\n📝 **الوصف:** ${item.description || "لا يوجد وصف"}\n\n**التفاصيل:**\n${item.category_name ? `• **الفئة:** ${item.category_name}\n` : ""}${item.marque ? `• **العلامة التجارية:** ${item.marque}\n` : ""}${item.modele ? `• **الطراز:** ${item.modele}\n` : ""}${item.color ? `• **اللون:** ${item.color}\n` : ""}${item.type ? `• **النوع:** ${item.type}\n` : ""}${item.etat ? `• **الحالة:** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **تاريخ النشر:** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[اتصل بالواجد](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+            fr: `🎯 **Objet #${item.id} trouvé !**\n\n📍 **Ville :** ${item.city || "Inconnue"}\n📝 **Description :** ${item.description || "Aucune description disponible"}\n\n**Détails :**\n${item.category_name ? `• **Catégorie :** ${item.category_name}\n` : ""}${item.marque ? `• **Marque :** ${item.marque}\n` : ""}${item.modele ? `• **Modèle :** ${item.modele}\n` : ""}${item.color ? `• **Couleur :** ${item.color}\n` : ""}${item.type ? `• **Type :** ${item.type}\n` : ""}${item.etat ? `• **État :** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **Posté le :** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[Contacter le trouveur](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+            en: `🎯 **Item #${item.id} found!**\n\n📍 **City:** ${item.city || "Unknown"}\n📝 **Description:** ${item.description || "No description available"}\n\n**Details:**\n${item.category_name ? `• **Category:** ${item.category_name}\n` : ""}${item.marque ? `• **Brand:** ${item.marque}\n` : ""}${item.modele ? `• **Model:** ${item.modele}\n` : ""}${item.color ? `• **Color:** ${item.color}\n` : ""}${item.type ? `• **Type:** ${item.type}\n` : ""}${item.etat ? `• **Condition:** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **Posted:** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[Contact the finder](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+          }
 
           return NextResponse.json({
             id: Date.now().toString(),
             role: "assistant",
-            content: response,
+            content: responses[context.userLanguage] || responses.fr,
           })
         } else {
-          const response = `❌ **Item #${itemId} not found**
-
-I couldn't find an item with ID #${itemId} in our database.
-
-**Possible reasons:**
-• The item ID doesn't exist
-• The item may have been removed
-• There might be a typo in the ID number
-
-🔍 **Try instead:**
-• Search by description: "I lost my [item] in [city]"
-• Browse recent items using Advanced Search
-• Post a new missing item ad
-
-💬 **Need help?** Tell me what you're looking for and I'll search our database!`
-
+          const notFoundMessages = {
+            ar: `❌ **العنصر #${itemId} غير موجود**\n\nلم أتمكن من العثور على عنصر بالرقم #${itemId} في قاعدة البيانات.`,
+            fr: `❌ **Objet #${itemId} non trouvé**\n\nJe n'ai pas pu trouver un objet avec l'ID #${itemId} dans notre base de données.`,
+            en: `❌ **Item #${itemId} not found**\n\nI couldn't find an item with ID #${itemId} in our database.`,
+          }
           return NextResponse.json({
             id: Date.now().toString(),
             role: "assistant",
-            content: response,
+            content: notFoundMessages[context.userLanguage] || notFoundMessages.fr,
           })
         }
       } catch (error) {
-        console.error("Error fetching item by ID:", error)
+        const errorMessages = {
+          ar: `❌ **خطأ في البحث عن العنصر #${itemId}**\n\nحدثت مشكلة في الوصول إلى قاعدة البيانات.`,
+          fr: `❌ **Erreur lors de la recherche de l'objet #${itemId}**\n\nIl y a eu un problème d'accès à la base de données.`,
+          en: `❌ **Error looking up Item #${itemId}**\n\nThere was a problem accessing the database.`,
+        }
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content: `❌ **Error looking up Item #${itemId}**
-
-There was a problem accessing the database. Please try again in a moment.
-
-🔄 **You can also:**
-• Refresh the page and try again
-• Use the Advanced Search form
-• Search by description instead of ID`,
+          content: errorMessages[context.userLanguage] || errorMessages.fr,
         })
       }
     }
 
     // Check if user is searching for lost items
-    const isSearchQuery = isSearchingForItems(userInput)
-    console.log("Is search query:", isSearchQuery)
+    const isSearchQuery = isSearchingForItems(userInput, context)
+    console.log("🔍 Is search query:", isSearchQuery)
 
     if (isSearchQuery) {
-      // Handle search for lost items
-      console.log("Handling search query...")
-
-      // Check if database is configured
       if (!process.env.DB_HOST) {
+        const errorMessages = {
+          ar: "❌ قاعدة البيانات غير متصلة. لا يمكنني البحث عن العناصر المفقودة الآن.",
+          fr: "❌ Base de données non connectée. Je ne peux pas rechercher d'objets perdus pour le moment.",
+          en: "❌ Database not connected. I can't search for lost items right now.",
+        }
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content:
-            "❌ Database not connected. I can help with general questions, but I can't search for lost items right now. Please configure the database settings.",
+          content: errorMessages[context.userLanguage] || errorMessages.fr,
         })
       }
 
-      // Extract search terms and search database
-      const searchTerms = extractSearchTerms(userInput)
-      console.log("Extracted search terms:", searchTerms)
-
+      // Extract search terms with context
+      const searchTerms = extractSearchTerms(userInput, context)
+      console.log("🔍 Search terms:", searchTerms)
       const searchResult = await searchDatabase(searchTerms)
-      console.log("Search result:", searchResult)
 
       // Handle missing city
       if (searchResult.missingCity) {
-        const response = `🏙️ **City is required for search!**
-
-To find your lost item, I need to know which city you lost it in. Please tell me:
-
-**Examples:**
-• "I lost my black phone in Casablanca"
-• "J'ai perdu mon téléphone noir à Rabat"  
-• "فقدت هاتفي الأسود في الدار البيضاء"
-
-**Supported cities:** Rabat, Casablanca, Marrakech, Fes, Tanger, Agadir, Meknes, Oujda, Kenitra, Tetouan, and more.
-
-Please specify the city where you lost your item! 📍`
-
+        const response = generateResponse("missingCity", {}, context.userLanguage)
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
@@ -563,19 +773,7 @@ Please specify the city where you lost your item! 📍`
 
       // Handle missing keywords
       if (searchResult.missingKeywords) {
-        const response = `📝 **More details needed!**
-
-I found the city "${searchTerms.city}" but need more information about your lost item:
-
-• **What item?** (phone, wallet, keys, bag, etc.)
-• **Color?** (black, white, red, etc.)  
-• **Brand?** (Samsung, Apple, Nike, etc.)
-• **Type/Description?** (leather wallet, iPhone, etc.)
-
-**Example:** "I lost my black Samsung phone in ${searchTerms.city}"
-
-Please provide more details about your lost item! 🔍`
-
+        const response = generateResponse("missingDetails", { city: searchTerms.city }, context.userLanguage)
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
@@ -583,15 +781,18 @@ Please provide more details about your lost item! 🔍`
         })
       }
 
-      // Handle search results - Return both text and structured data for cards
+      // Handle search results
       if (searchResult.results.length > 0) {
-        const response = `I found ${searchResult.results.length} matching items in ${searchTerms.city}! Check the cards below for details.`
+        const response = generateResponse(
+          "searchResults",
+          { count: searchResult.results.length, city: searchTerms.city },
+          context.userLanguage,
+        )
 
-        // Transform results into missing persons format for cards
         const missingPersons = searchResult.results.map((item) => ({
           id: item.id.toString(),
-          description: item.description || "No description available",
-          city: item.city || "Unknown",
+          description: item.description || "Aucune description disponible",
+          city: item.city || "Inconnue",
           category_name: item.category_name,
           marque: item.marque,
           modele: item.modele,
@@ -599,7 +800,6 @@ Please provide more details about your lost item! 🔍`
           type: item.type,
           etat: item.etat,
           postdate: item.postdate,
-          match_count: item.match_count,
           contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`,
         }))
 
@@ -610,24 +810,7 @@ Please provide more details about your lost item! 🔍`
           missingPersons: missingPersons,
         })
       } else {
-        const response = `❌ **No matches found in ${searchTerms.city}**
-
-I searched for items matching your description in **${searchTerms.city}** but couldn't find any matches.
-
-🆕 **Create a missing item post:**
-[Post New Ad](https://mafqoodat.ma/post.php)
-
-🔍 **Try different keywords:**
-• Be more specific about color, brand, or type
-• Check spelling of item description
-• Try alternative names for your item
-
-🆔 **Have an item ID?** You can ask me about a specific item: "show me item [ID number]"
-
-💬 **Need help?** I can assist you with creating a detailed description for your post.
-
-**Remember:** The city and at least 2 matching details are required to find items in our database.`
-
+        const response = generateResponse("noResults", { city: searchTerms.city }, context.userLanguage)
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
@@ -635,57 +818,37 @@ I searched for items matching your description in **${searchTerms.city}** but co
         })
       }
     } else {
-      // Use ChatGPT API for general conversation
-      console.log("Using ChatGPT API for general conversation...")
+      // Use ChatGPT API for general conversation with fallback
+      console.log("💬 Using general conversation mode")
+
+      // Fallback response if OpenAI is not available
+      const fallbackResponses = {
+        ar: "أنا هنا لمساعدتك في العثور على الأشياء المفقودة في المغرب. إذا فقدت شيئًا، أخبرني بنوع الشيء والمدينة وسأبحث لك في قاعدة البيانات!",
+        fr: "Je suis là pour vous aider à retrouver vos objets perdus au Maroc. Si vous avez perdu quelque chose, dites-moi quel objet et dans quelle ville, et je rechercherai dans notre base de données !",
+        en: "I'm here to help you find your lost items in Morocco. If you've lost something, tell me what item and which city, and I'll search our database for you!",
+      }
 
       if (!process.env.OPENAI_API_KEY) {
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content:
-            "I need OpenAI API configuration to have natural conversations. For now, I can only help you search for lost items if you tell me specifically what you're looking for, or show you specific items by their ID number.",
+          content: fallbackResponses[context.userLanguage] || fallbackResponses.fr,
         })
       }
 
       try {
+        const systemPrompts = {
+          ar: "أنت مساعد لمنصة مغربية للأشياء المفقودة والموجودة تسمى مفقودات. تساعد المستخدمين في العثور على الأشياء المفقودة. رد دائماً بالعربية. كن مفيداً ومتعاطفاً.",
+          fr: "Tu es un assistant pour une plateforme marocaine d'objets perdus et trouvés appelée Mafqoodat. Tu aides les utilisateurs avec les objets perdus et trouvés. Réponds toujours en français. Sois utile et empathique.",
+          en: "You are an assistant for a Moroccan lost and found platform called Mafqoodat. You help users with lost and found items. Always respond in English. Be helpful and empathetic.",
+        }
+
         const { text } = await generateText({
           model: openai("gpt-4o"),
           messages: [
             {
               role: "system",
-              content: `You are an assistant for a Moroccan missing items platform called **Mafqoodat**. You only help users with the following tasks **related to lost and found items**:
-
-1. Search for lost items based on city and details (color, brand, type...)
-2. Retrieve a specific item using its ID (e.g., "show me item 123")
-3. Help users **post a new missing item**
-4. Explain the platform features related to lost and found only
-
-⚠️ You **must NOT answer general questions** (weather, politics, news, unrelated advice, etc). If a user asks a question **outside the lost & found domain**, politely reply:
-
-**"I'm here to help you search for or report lost items on Mafqoodat. Please tell me what item you lost or ask about a specific ID."**
-
-🗣 You support Arabic, French, and English. Always reply in the same language the user uses.
-
-🧠 Your only knowledge is about the Mafqoodat platform and lost & found items.
-
-✅ When a user talks about an item:
-- Make sure the **city** is provided (like Casablanca, Rabat, Tanger, etc.)
-- Make sure there are at least **2 useful details**: color, brand, type...
-
-📍 Supported cities: Rabat, Casablanca, Marrakech, Fes, Tanger, Agadir, Meknes, Oujda, Kenitra, Tetouan...
-
-👀 Examples:
-- "I lost my phone in Rabat" → Ask for brand/color
-- "J'ai perdu mon sac noir à Casablanca" → Start a search
-- "item #123" → Fetch specific item
-
-⛔ Examples of invalid requests:
-- "Who is the president?" → Refuse
-- "What's the weather today?" → Refuse
-- "Tell me a joke" → Refuse
-- "How to study better?" → Refuse
-
-Be helpful and empathetic — but stay 100% focused on lost and found services only.`,
+              content: systemPrompts[context.userLanguage] || systemPrompts.fr,
             },
             ...messages.map((msg) => ({
               role: msg.role,
@@ -704,8 +867,7 @@ Be helpful and empathetic — but stay 100% focused on lost and found services o
         return NextResponse.json({
           id: Date.now().toString(),
           role: "assistant",
-          content:
-            "I'm having trouble connecting to my AI service right now. Please try again in a moment, or let me know if you're looking for a specific lost item and I can search our database. You can also ask me about specific items by their ID number.",
+          content: fallbackResponses[context.userLanguage] || fallbackResponses.fr,
         })
       }
     }
@@ -714,7 +876,7 @@ Be helpful and empathetic — but stay 100% focused on lost and found services o
     return NextResponse.json({
       id: Date.now().toString(),
       role: "assistant",
-      content: "Something went wrong. Please try again or refresh the page.",
+      content: "Une erreur s'est produite. Veuillez réessayer ou actualiser la page.",
     })
   }
 }
