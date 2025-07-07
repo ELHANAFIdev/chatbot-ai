@@ -303,6 +303,7 @@ function extractItemKeywords(text: string) {
   // D'abord traduire le texte en français
   const translatedText = translateToFrench(text)
   const lowerText = translatedText.toLowerCase()
+  const originalLower = text.toLowerCase()
 
   // Mots-clés français pour les objets
   const frenchItems = [
@@ -347,9 +348,9 @@ function extractItemKeywords(text: string) {
 
   const foundItems = []
 
-  // Chercher les objets français
+  // Chercher les objets français dans le texte traduit ET original
   for (const item of frenchItems) {
-    if (lowerText.includes(item)) {
+    if (lowerText.includes(item) || originalLower.includes(item)) {
       foundItems.push(item)
     }
   }
@@ -372,6 +373,7 @@ function extractCities(text: string) {
   // D'abord traduire le texte en français
   const translatedText = translateToFrench(text)
   const lowerText = translatedText.toLowerCase()
+  const originalLower = text.toLowerCase()
 
   // Villes françaises
   const frenchCities = [
@@ -389,8 +391,9 @@ function extractCities(text: string) {
 
   const foundCities = []
 
+  // Chercher les villes françaises dans le texte traduit ET original
   for (const city of frenchCities) {
-    if (lowerText.includes(city)) {
+    if (lowerText.includes(city) || originalLower.includes(city)) {
       foundCities.push(city)
     }
   }
@@ -444,7 +447,9 @@ function analyzeConversationContext(messages: any[]) {
     lastAssistantMessage.includes("city you lost it in") ||
     lastAssistantMessage.includes("ville vous l'avez perdu") ||
     lastAssistantMessage.includes("quelle ville") ||
-    lastAssistantMessage.includes("which city")
+    lastAssistantMessage.includes("which city") ||
+    lastAssistantMessage.includes("تحديد المدينة") ||
+    lastAssistantMessage.includes("specify the city")
 
   const isWaitingForDetails =
     lastAssistantMessage.includes("More details needed") ||
@@ -465,25 +470,78 @@ function analyzeConversationContext(messages: any[]) {
   }
 }
 
-// Check if user is searching for items
+// Check if user is searching for items - Version corrigée
 function isSearchingForItems(text: string, context: any = null) {
+  console.log("🔍 Checking if searching for items:", text)
+
+  // Traduire d'abord le texte pour détecter les mots-clés
+  const translatedText = translateToFrench(text)
+  console.log("🔄 Translated text for search detection:", translatedText)
+
+  // Mots-clés qui indiquent une recherche d'objet perdu (plus complets)
+  const lostKeywords = [
+    // Français
+    "perdu",
+    "perdus",
+    "perdue",
+    "perdues",
+    "cherche",
+    "recherche",
+    "trouve",
+    "trouvé",
+    "retrouve",
+    "retrouver",
+    // Anglais
+    "lost",
+    "missing",
+    "search",
+    "looking",
+    "find",
+    "found",
+    // Arabe
+    "فقدت",
+    "فقد",
+    "ضاع",
+    "ضائع",
+    "مفقود",
+    "مفقودة",
+    "أبحث",
+    "ابحث",
+    "أريد",
+    "أجد",
+    "وجدت",
+  ]
+
+  // Vérifier si le texte contient des mots-clés de perte
+  const hasLostKeyword = lostKeywords.some((keyword) => {
+    const textLower = text.toLowerCase()
+    const translatedLower = translatedText.toLowerCase()
+    return textLower.includes(keyword.toLowerCase()) || translatedLower.includes(keyword.toLowerCase())
+  })
+
+  console.log("🔍 Has lost keyword:", hasLostKeyword)
+
   // Check context first
   if (context) {
     if (context.isWaitingForCity && context.conversationItems.length > 0) {
       const cities = extractCities(text)
+      console.log("🏙️ Waiting for city, found cities:", cities)
       if (cities.length > 0) return true
     }
 
     if (context.isWaitingForDetails && context.conversationCities.length > 0) {
       const items = extractItemKeywords(text)
+      console.log("📱 Waiting for details, found items:", items)
       if (items.length > 0) return true
     }
 
     if (context.conversationItems.length > 0 && extractCities(text).length > 0) {
+      console.log("🔄 Context items + new city")
       return true
     }
 
     if (context.conversationCities.length > 0 && extractItemKeywords(text).length > 0) {
+      console.log("🔄 Context city + new items")
       return true
     }
   }
@@ -492,7 +550,15 @@ function isSearchingForItems(text: string, context: any = null) {
   const hasCity = extractCities(text).length > 0
   const hasItem = extractItemKeywords(text).length > 0
 
-  return hasCity && hasItem
+  console.log("🏙️ Has city:", hasCity, extractCities(text))
+  console.log("📱 Has item:", hasItem, extractItemKeywords(text))
+
+  // Nouvelle logique : Si on a un mot-clé de perte ET (une ville OU un objet), c'est une recherche
+  // OU si on a à la fois une ville ET un objet (même sans mot-clé explicite)
+  const isSearch = (hasLostKeyword && (hasCity || hasItem)) || (hasCity && hasItem)
+
+  console.log("✅ Final search decision:", isSearch)
+  return isSearch
 }
 
 // Get item by ID
@@ -560,7 +626,7 @@ function generateResponse(type: string, data: any, language: string) {
   const responses = {
     missingCity: {
       ar: `🏙️ **المدينة مطلوبة للبحث!**\n\nللعثور على العنصر المفقود، أحتاج إلى معرفة المدينة:\n\n**مثال:** "فقدت هاتفي في الدار البيضاء"\n\n**المدن:** الرباط، الدار البيضاء، مراكش، فاس، طنجة، أغادير\n\nيرجى تحديد المدينة! 📍`,
-      fr: `🏙️ **Ville requise pour la recherche !**\n\nPour trouver votre objet perdu, j'ai besoin de savoir dans quelle ville :\n\n**Exemple :** "J'ai perdu mon téléphone à Casablanca"\n\n**Villes :** Rabat, Casablanca, Marrakech, Fès, Tanger, Agadir\n\nVeuillez spécifier la ville où vous avez perdu votre objet ! 📍`,
+      fr: `🏙️ **Ville requise pour la recherche !**\n\nPour trouver votre objet perdu, j'ai besoin de savoir dans quelle ville :\n\n**Exemple :** "J'ai perdu mon téléphone à Casablanca"\n\n**Villes :** Rabat, Casablanca, Marrakech, Fès, Tanger, Agadir\n\nVeuillez spécifier la ville ! 📍`,
       en: `🏙️ **City is required for search!**\n\nTo find your lost item, I need to know the city:\n\n**Example:** "I lost my phone in Casablanca"\n\n**Cities:** Rabat, Casablanca, Marrakech, Fes, Tanger, Agadir\n\nPlease specify the city! 📍`,
     },
     missingDetails: {

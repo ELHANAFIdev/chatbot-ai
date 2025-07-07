@@ -1,92 +1,84 @@
-"use client"
+// "use client"
 
-import { useState, useEffect } from "react"
-import { Loader2 } from "lucide-react"
+// import type React from "react"
 
-interface SubcategoryOption {
-  id: number
-  nom: string
-}
+// import { useState } from "react"
+// import { Button } from "@/components/ui/button"
+// import { Send } from "lucide-react"
 
-interface SubcategorySelectorProps {
-  categoryId: string
-  onChange: (subcategoryId: string) => void
-  value?: string
-  className?: string
-  disabled?: boolean
-}
+// interface FallbackChatProps {
+//   mode: "search" | "report"
+// }
 
-export default function SubcategorySelector({
-  categoryId,
-  onChange,
-  value = "",
-  className = "",
-  disabled = false,
-}: SubcategorySelectorProps) {
-  const [subcategories, setSubcategories] = useState<SubcategoryOption[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+// export default function FallbackChat({ mode }: FallbackChatProps) {
+//   const [messages, setMessages] = useState([
+//     {
+//       id: "1",
+//       role: "assistant" as const,
+//       content:
+//         mode === "search"
+//           ? "I'm here to help you search for your missing item! Since the AI chat is temporarily unavailable, please use the Advanced Search form to filter items by category, city, and description. You can also browse all recent missing items."
+//           : "I'm here to help you report your missing item! Since the AI chat is temporarily unavailable, please click 'Post New Ad' to go directly to the reporting form where you can provide all the details about your lost item.",
+//     },
+//   ])
+//   const [input, setInput] = useState("")
 
-  useEffect(() => {
-    if (!categoryId) {
-      setSubcategories([])
-      return
-    }
+//   const handleSubmit = (e: React.FormEvent) => {
+//     e.preventDefault()
+//     if (!input.trim()) return
 
-    const fetchSubcategories = async () => {
-      setIsLoading(true)
-      setError(null)
+//     // Add user message
+//     const userMessage = {
+//       id: Date.now().toString(),
+//       role: "user" as const,
+//       content: input,
+//     }
 
-      try {
-        const response = await fetch(`/api/souscatg?categoryId=${categoryId}`)
-        const data = await response.json()
+//     // Add helpful response
+//     const assistantMessage = {
+//       id: (Date.now() + 1).toString(),
+//       role: "assistant" as const,
+//       content:
+//         mode === "search"
+//           ? `I understand you're looking for: "${input}"\n\nSince the AI chat is temporarily unavailable, I recommend:\n• Use the Advanced Search form to filter by category and location\n• Try different keywords in the search\n• Check the recent items list\n• If you don't find it, consider posting a new ad`
+//           : `Thank you for providing those details: "${input}"\n\nTo complete your missing item report:\n• Click "Post New Ad" to access the full form\n• Include all the details you mentioned\n• Add photos if available\n• Provide your contact information\n\nThis will help others find and return your item!`,
+//     }
 
-        if (!response.ok) {
-          throw new Error(data.error || `HTTP error! status: ${response.status}`)
-        }
+//     setMessages((prev) => [...prev, userMessage, assistantMessage])
+//     setInput("")
+//   }
 
-        setSubcategories(Array.isArray(data) ? data : [])
-      } catch (error: any) {
-        console.error("Error fetching subcategories:", error)
-        setError(error.message)
-        setSubcategories([])
-      } finally {
-        setIsLoading(false)
-      }
-    }
+//   return (
+//     <div className="flex flex-col h-full">
+//       {/* Messages */}
+//       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+//         {messages.map((message) => (
+//           <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+//             <div
+//               className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg whitespace-pre-wrap ${
+//                 message.role === "user" ? "bg-blue-600 text-white" : "bg-white text-gray-800 shadow-sm border"
+//               }`}
+//             >
+//               {message.content}
+//             </div>
+//           </div>
+//         ))}
+//       </div>
 
-    fetchSubcategories()
-  }, [categoryId])
-
-  return (
-    <div className={`relative ${className}`}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        disabled={disabled || isLoading || subcategories.length === 0}
-        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:bg-gray-100"
-      >
-        <option value="">
-          {isLoading
-            ? "Loading subcategories..."
-            : error
-              ? "Error loading subcategories"
-              : subcategories.length === 0
-                ? "No subcategories available"
-                : `Select subcategory (${subcategories.length})`}
-        </option>
-        {subcategories.map((subcategory) => (
-          <option key={subcategory.id} value={subcategory.id.toString()}>
-            {subcategory.nom}
-          </option>
-        ))}
-      </select>
-      {isLoading && (
-        <div className="absolute right-2 top-1/2 -translate-y-1/2">
-          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-        </div>
-      )}
-      {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
-    </div>
-  )
-}
+//       {/* Input */}
+//       <div className="bg-white border-t p-4">
+//         <form onSubmit={handleSubmit} className="flex space-x-2">
+//           <input
+//             value={input}
+//             onChange={(e) => setInput(e.target.value)}
+//             placeholder={`Describe your ${mode === "search" ? "missing" : "lost"} item...`}
+//             className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+//           />
+//           <Button type="submit" className="px-6" disabled={!input.trim()}>
+//             <Send className="h-4 w-4" />
+//           </Button>
+//         </form>
+//       </div>
+//     </div>
+//   )
+// }
