@@ -1,0 +1,1708 @@
+import { NextResponse } from "next/server"
+import { openai } from "@ai-sdk/openai"
+import { generateText } from "ai"
+import { query } from "@/lib/db"
+
+export const maxDuration = 30
+
+
+// Dictionnaire de synonymes pour les recherches d'animaux
+const animalSynonyms = {
+  chien: ["chien", "chiot", "dog", "puppy", "canin", "toutou", "griffon"], // Ajout d'une race pour l'exemple
+  chat: ["chat", "chaton", "cat", "kitten", "félin", "minou", "siamois"],
+  animal: ["animal", "pet", "bête", "créature"],
+}
+
+// Enhanced language detection with better Arabic support
+function detectLanguage(text: string): "ar" | "fr" | "en" {
+  const lowerText = text.toLowerCase().trim()
+  console.log("🗣️ Detecting language for:", lowerText)
+
+  // Arabic detection (highest priority) - Enhanced
+  if (/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)) {
+    console.log("✅ Detected: Arabic (Unicode)")
+    return "ar"
+  }
+
+  // Arabic keywords detection
+  const arabicKeywords = [
+    "فقدت",
+    "فقد",
+    "ضاع",
+    "ضائع",
+    "مفقود",
+    "مفقودة",
+    "أبحث",
+    "ابحث",
+    "أريد",
+    "أجد",
+    "وجدت",
+    "بحث",
+    "هاتف",
+    "جوال",
+    "موبايل",
+    "تلفون",
+    "محفظة",
+    "مفتاح",
+    "مفاتيح",
+    "حقيبة",
+    "شنطة",
+    "ساعة",
+    "نظارات",
+    "نظارة",
+    "خاتم",
+    "كلب",
+    "قط",
+    "قطة",
+    "حيوان",
+    "جواز",
+    "بطاقة",
+    "وثيقة",
+    "الدار البيضاء",
+    "الرباط",
+    "مراكش",
+    "فاس",
+    "طنجة",
+    "أغادير",
+    "أسود",
+    "أبيض",
+    "أحمر",
+    "أزرق",
+    "أخضر",
+    "أصفر",
+    "سامسونغ",
+    "سامسونج",
+    "آيفون",
+    "في",
+    "من",
+    "إلى",
+    "عند",
+  ]
+
+  let arabicScore = 0
+  for (const keyword of arabicKeywords) {
+    if (text.includes(keyword)) {
+      arabicScore += 2
+    }
+  }
+
+  if (arabicScore > 0) {
+    console.log("✅ Detected: Arabic (keywords)")
+    return "ar"
+  }
+
+  // Enhanced French detection
+  const frenchIndicators = [
+    "je",
+    "j'ai",
+    "tu",
+    "il",
+    "elle",
+    "nous",
+    "vous",
+    "ils",
+    "elles",
+    "mon",
+    "ma",
+    "mes",
+    "ton",
+    "ta",
+    "tes",
+    "son",
+    "sa",
+    "ses",
+    "le",
+    "la",
+    "les",
+    "un",
+    "une",
+    "des",
+    "du",
+    "de",
+    "dans",
+    "à",
+    "avec",
+    "pour",
+    "sur",
+    "par",
+    "sans",
+    "sous",
+    "perdu",
+    "perdue",
+    "cherche",
+    "trouve",
+    "trouvé",
+    "téléphone",
+    "portable",
+    "sac",
+    "clé",
+    "clés",
+    "portefeuille",
+    "lunettes",
+    "chien",
+    "chat",
+    "où",
+    "quand",
+    "comment",
+    "pourquoi",
+    "c'est",
+    "qu'il",
+    "qu'elle",
+  ]
+
+  // English indicators
+  const englishIndicators = [
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "my",
+    "your",
+    "his",
+    "her",
+    "the",
+    "a",
+    "an",
+    "in",
+    "at",
+    "on",
+    "with",
+    "for",
+    "and",
+    "or",
+    "lost",
+    "find",
+    "search",
+    "looking",
+    "missing",
+    "found",
+    "phone",
+    "bag",
+    "key",
+    "keys",
+    "wallet",
+    "glasses",
+    "dog",
+    "cat",
+    "where",
+    "when",
+    "what",
+    "how",
+    "is",
+    "was",
+    "have",
+    "do",
+    "will",
+    "can",
+  ]
+
+  let frenchScore = 0
+  let englishScore = 0
+
+  for (const indicator of frenchIndicators) {
+    if (lowerText.includes(indicator)) {
+      const weight = ["j'ai", "où", "c'est", "téléphone", "perdu"].includes(indicator) ? 2 : 1
+      frenchScore += weight
+    }
+  }
+
+  for (const indicator of englishIndicators) {
+    if (lowerText.includes(indicator)) {
+      englishScore++
+    }
+  }
+
+  console.log(`📊 Language scores - French: ${frenchScore}, English: ${englishScore}`)
+
+  if (frenchScore > englishScore) {
+    console.log("✅ Detected: French")
+    return "fr"
+  } else if (englishScore > frenchScore) {
+    console.log("✅ Detected: English")
+    return "en"
+  } else if (frenchScore === englishScore && frenchScore > 0) {
+    console.log("✅ Detected: French (preference)")
+    return "fr"
+  }
+
+  console.log("✅ Detected: French (default)")
+  return "fr"
+}
+
+// Function to detect if user is asking about a specific item ID
+function isAskingAboutItemId(text: string) {
+  const patterns = [
+    /\b(item|objet|id|number|numéro|#)\s*(\d+)\b/i,
+    /\b(\d+)\s*(item|objet|id|number|numéro)\b/i,
+    /^#?\s*(\d+)$/,
+  ]
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      const numberId = match.find((group) => /^\d+$/.test(group))
+      if (numberId) {
+        return Number.parseInt(numberId)
+      }
+    }
+  }
+  return null
+}
+
+// Enhanced translation dictionary - Arabic to French
+const translationDictionary = {
+  // Search actions - Actions de recherche
+  فقدت: "perdu",
+  فقد: "perdu",
+  ضاع: "perdu",
+  ضائع: "perdu",
+  مفقود: "perdu",
+  مفقودة: "perdu",
+  أبحث: "cherche",
+  ابحث: "cherche",
+  بحث: "cherche",
+  أريد: "cherche",
+  أجد: "trouve",
+  وجدت: "trouvé",
+  العثور: "trouve",
+  البحث: "cherche",
+
+  // Electronics - Électronique
+  هاتف: "téléphone",
+  جوال: "téléphone",
+  موبايل: "téléphone",
+  تلفون: "téléphone",
+  حاسوب: "ordinateur",
+  كمبيوتر: "ordinateur",
+  لابتوب: "ordinateur",
+  لوحي: "tablette",
+  تابلت: "tablette",
+
+  // Personal items - Objets personnels
+  محفظة: "portefeuille",
+  مفتاح: "clé",
+  مفاتيح: "clés",
+  حقيبة: "sac",
+  شنطة: "sac",
+  ساعة: "montre",
+  نظارات: "lunettes",
+  نظارة: "lunettes",
+  خاتم: "bague",
+
+  // Animals - Animaux
+  كلب: "chien",
+  قط: "chat",
+  قطة: "chat",
+  حيوان: "animal",
+
+  // Documents
+  جواز: "passeport",
+  "جواز سفر": "passeport",
+  بطاقة: "carte",
+  وثيقة: "document",
+
+  // Cities - Villes (Arabic to French)
+  "الدار البيضاء": "casablanca",
+  البيضاء: "casablanca",
+  كازا: "casablanca",
+  الرباط: "rabat",
+  مراكش: "marrakech",
+  فاس: "fes",
+  طنجة: "tanger",
+  أغادير: "agadir",
+  مكناس: "meknes",
+  وجدة: "oujda",
+  القنيطرة: "kenitra",
+  تطوان: "tetouan",
+
+  // Colors - Couleurs
+  أسود: "noir",
+  أبيض: "blanc",
+  أحمر: "rouge",
+  أزرق: "bleu",
+  أخضر: "vert",
+  أصفر: "jaune",
+
+  // Brands - Marques
+  آيفون: "iphone",
+  ايفون: "iphone",
+  سامسونغ: "samsung",
+  سامسونج: "samsung",
+
+  // Prepositions and common words
+  في: "à",
+  من: "de",
+  إلى: "à",
+  عند: "chez",
+  مع: "avec",
+
+  // Existing translations remain the same...
+  phone: "téléphone",
+  smartphone: "téléphone",
+  mobile: "téléphone",
+  laptop: "ordinateur",
+  computer: "ordinateur",
+  pc: "ordinateur",
+  tablet: "tablette",
+  wallet: "portefeuille",
+  key: "clé",
+  keys: "clés",
+  bag: "sac",
+  backpack: "sac",
+  watch: "montre",
+  glasses: "lunettes",
+  ring: "bague",
+  dog: "chien",
+  cat: "chat",
+  pet: "animal",
+  passport: "passeport",
+  card: "carte",
+  document: "document",
+  umbrella: "parapluie",
+  bicycle: "vélo",
+  bike: "vélo",
+  book: "livre",
+  money: "argent",
+  casa: "casablanca",
+  marrakesh: "marrakech",
+  fez: "fes",
+  tangier: "tanger",
+  black: "noir",
+  white: "blanc",
+  red: "rouge",
+  blue: "bleu",
+  green: "vert",
+  yellow: "jaune",
+  iphone: "iphone",
+  lost: "perdu",
+  find: "trouve",
+  search: "cherche",
+  looking: "cherche",
+  missing: "perdu",
+  found: "trouvé",
+}
+
+// Function to translate text to French (especially Arabic)
+function translateToFrench(text: string): string {
+  let translatedText = text.toLowerCase()
+
+  console.log("🔄 Original text:", text)
+
+  // Special handling for Arabic text
+  const hasArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text)
+
+  if (hasArabic) {
+    console.log("🔄 Processing Arabic text")
+
+    // Replace Arabic phrases first (longer phrases before single words)
+    const arabicPhrases = ["جواز سفر", "الدار البيضاء", "فقدت هاتفي", "أبحث عن", "ضاع مني"]
+
+    for (const phrase of arabicPhrases) {
+      if (text.includes(phrase) && translationDictionary[phrase]) {
+        translatedText = translatedText.replace(new RegExp(phrase, "g"), translationDictionary[phrase])
+        console.log(`🔄 Translated phrase "${phrase}" → "${translationDictionary[phrase]}"`)
+      }
+    }
+  }
+
+  // Replace each word/phrase with its French equivalent
+  for (const [original, french] of Object.entries(translationDictionary)) {
+    if (text.includes(original)) {
+      const regex = new RegExp(original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")
+      translatedText = translatedText.replace(regex, french)
+      console.log(`🔄 Translated "${original}" → "${french}"`)
+    }
+  }
+
+  console.log("✅ Final translated text:", translatedText)
+  return translatedText
+}
+
+// Enhanced function to extract specific brands and models with precision
+function extractPreciseSpecs(text: string) {
+  const translatedText = translateToFrench(text)
+  const lowerText = translatedText.toLowerCase()
+  const originalLower = text.toLowerCase()
+
+  console.log("🔍 Extracting precise specs from:", lowerText)
+
+  // Color detection
+  const colors = {
+    noir: ["noir", "black", "أسود"],
+    blanc: ["blanc", "white", "أبيض"],
+    rouge: ["rouge", "red", "أحمر"],
+    bleu: ["bleu", "blue", "أزرق"],
+    vert: ["vert", "green", "أخضر"],
+    jaune: ["jaune", "yellow", "أصفر"],
+    rose: ["rose", "pink", "وردي"],
+    gris: ["gris", "gray", "grey", "رمادي"],
+    marron: ["marron", "brown", "بني"],
+    violet: ["violet", "purple", "بنفسجي"],
+  }
+
+  let detectedColor = null
+  for (const [frenchColor, colorKeywords] of Object.entries(colors)) {
+    for (const keyword of colorKeywords) {
+      if (lowerText.includes(keyword) || originalLower.includes(keyword)) {
+        detectedColor = frenchColor
+        console.log(`🎨 Found color: ${frenchColor} (${keyword})`)
+        break
+      }
+    }
+    if (detectedColor) break
+  }
+
+  // Enhanced brand detection with car brands
+  const brandSpecs = {
+    // Car brands
+    renault: {
+      brand: "renault",
+      category: "clé",
+      keywords: ["renault"],
+      strictBrands: ["renault"],
+    },
+    peugeot: {
+      brand: "peugeot",
+      category: "clé",
+      keywords: ["peugeot"],
+      strictBrands: ["peugeot"],
+    },
+    citroen: {
+      brand: "citroën",
+      category: "clé",
+      keywords: ["citroën", "citroen"],
+      strictBrands: ["citroën", "citroen"],
+    },
+    // Phone brands
+    iphone: {
+      brand: "apple",
+      category: "téléphone",
+      keywords: ["iphone", "آيفون", "ايفون"],
+      strictBrands: ["apple", "iphone"],
+    },
+    samsung: {
+      brand: "samsung",
+      category: "téléphone",
+      keywords: ["samsung", "galaxy", "سامسونغ", "سامسونج"],
+      strictBrands: ["samsung"],
+    },
+    huawei: {
+      brand: "huawei",
+      category: "téléphone",
+      keywords: ["huawei", "mate", "p30", "p40"],
+      strictBrands: ["huawei"],
+    },
+    xiaomi: {
+      brand: "xiaomi",
+      category: "téléphone",
+      keywords: ["xiaomi", "redmi", "mi"],
+      strictBrands: ["xiaomi"],
+    },
+    nokia: {
+      brand: "nokia",
+      category: "téléphone",
+      keywords: ["nokia"],
+      strictBrands: ["nokia"],
+    },
+    sony: {
+      brand: "sony",
+      category: "téléphone",
+      keywords: ["sony", "xperia"],
+      strictBrands: ["sony"],
+    },
+    lg: {
+      brand: "lg",
+      category: "téléphone",
+      keywords: ["lg"],
+      strictBrands: ["lg"],
+    },
+    motorola: {
+      brand: "motorola",
+      category: "téléphone",
+      keywords: ["motorola", "moto"],
+      strictBrands: ["motorola"],
+    },
+    oneplus: {
+      brand: "oneplus",
+      category: "téléphone",
+      keywords: ["oneplus", "one plus"],
+      strictBrands: ["oneplus"],
+    },
+    oppo: {
+      brand: "oppo",
+      category: "téléphone",
+      keywords: ["oppo"],
+      strictBrands: ["oppo"],
+    },
+    vivo: {
+      brand: "vivo",
+      category: "téléphone",
+      keywords: ["vivo"],
+      strictBrands: ["vivo"],
+    },
+    realme: {
+      brand: "realme",
+      category: "téléphone",
+      keywords: ["realme"],
+      strictBrands: ["realme"],
+    },
+  }
+
+  const foundSpecs = {
+    brands: [],
+    categories: [],
+    color: detectedColor,
+    isSpecific: false,
+    strictBrands: [],
+  }
+
+  // Check for specific brand mentions
+  for (const [key, spec] of Object.entries(brandSpecs)) {
+    for (const keyword of spec.keywords) {
+      if (lowerText.includes(keyword) || originalLower.includes(keyword)) {
+        foundSpecs.brands.push(spec.brand)
+        foundSpecs.categories.push(spec.category)
+        foundSpecs.strictBrands.push(...spec.strictBrands)
+        foundSpecs.isSpecific = true
+        console.log(`🎯 Found specific brand: ${spec.brand} (${keyword})`)
+        break
+      }
+    }
+  }
+
+  // If no specific brand found, look for general categories
+  if (!foundSpecs.isSpecific) {
+    const generalItems = [
+      "clé",
+      "clés",
+      "téléphone",
+      "portable",
+      "ordinateur",
+      "tablette",
+      "portefeuille",
+      "sac",
+      "montre",
+      "lunettes",
+      "bague",
+      "chien",
+      "chat",
+      "animal",
+      "passeport",
+      "carte",
+      "document",
+      "chèque",
+    ]
+
+    for (const item of generalItems) {
+      if (lowerText.includes(item) || originalLower.includes(item)) {
+        foundSpecs.categories.push(item)
+        console.log(`📱 Found general category: ${item}`)
+      }
+    }
+  }
+
+  // Remove duplicates
+  foundSpecs.brands = [...new Set(foundSpecs.brands)]
+  foundSpecs.categories = [...new Set(foundSpecs.categories)]
+  foundSpecs.strictBrands = [...new Set(foundSpecs.strictBrands)]
+
+  console.log("🎯 Final extracted specs:", foundSpecs)
+  return foundSpecs
+}
+
+// Function to extractCities (now works with Arabic translation)
+function extractCities(text: string) {
+  // First translate the text to French (especially important for Arabic)
+  const translatedText = translateToFrench(text)
+  const lowerText = translatedText.toLowerCase()
+  const originalLower = text.toLowerCase()
+
+  // French cities
+  const frenchCities = [
+    "rabat",
+    "casablanca",
+    "marrakech",
+    "fes",
+    "tanger",
+    "agadir",
+    "meknes",
+    "oujda",
+    "kenitra",
+    "tetouan",
+  ]
+
+  const foundCities = []
+
+  // Search for French cities in translated AND original text
+  for (const city of frenchCities) {
+    if (lowerText.includes(city) || originalLower.includes(city)) {
+      foundCities.push(city)
+    }
+  }
+
+  console.log("🏙️ Extracted French cities:", foundCities)
+  return [...new Set(foundCities)] // Remove duplicates
+}
+
+// Enhanced function to analyze conversation context
+function analyzeConversationContext(messages: any[]) {
+  let lastUserMessage = ""
+  let lastAssistantMessage = ""
+  const conversationSpecs = { brands: [], categories: [] }
+  const conversationCities = []
+  let userLanguage = "fr" // Default to French
+
+  const recentMessages = messages.slice(-4)
+
+  for (const message of recentMessages) {
+    if (message.role === "user") {
+      lastUserMessage = message.content
+      userLanguage = detectLanguage(message.content)
+      const specs = extractPreciseSpecs(message.content)
+      const cities = extractCities(message.content)
+      conversationSpecs.brands.push(...specs.brands)
+      conversationSpecs.categories.push(...specs.categories)
+      conversationCities.push(...cities)
+    } else if (message.role === "assistant") {
+      lastAssistantMessage = message.content
+    }
+  }
+
+  // Check if this is a new search
+  const currentSpecs = extractPreciseSpecs(lastUserMessage)
+  const currentCities = extractCities(lastUserMessage)
+  const currentLanguage = detectLanguage(lastUserMessage)
+
+  const isNewSearch =
+    (currentSpecs.brands.length > 0 || currentSpecs.categories.length > 0) &&
+    (lastAssistantMessage.includes("matching items") ||
+      lastAssistantMessage.includes("objets correspondants") ||
+      lastAssistantMessage.includes("عناصر مطابقة") ||
+      lastAssistantMessage.includes("No matches found") ||
+      lastAssistantMessage.includes("Aucune correspondance") ||
+      lastAssistantMessage.includes("لم يتم العثور"))
+
+  const isWaitingForDetails =
+    lastAssistantMessage.includes("More details needed") ||
+    lastAssistantMessage.includes("Plus de détails") ||
+    lastAssistantMessage.includes("تفاصيل أكثر") ||
+    lastAssistantMessage.includes("need more information") ||
+    lastAssistantMessage.includes("plus d'informations")
+
+  return {
+    lastUserMessage,
+    lastAssistantMessage,
+    conversationSpecs: isNewSearch
+      ? currentSpecs
+      : {
+          brands: [...new Set(conversationSpecs.brands)],
+          categories: [...new Set(conversationSpecs.categories)],
+        },
+    conversationCities: isNewSearch ? currentCities : [...new Set(conversationCities)],
+    isWaitingForDetails,
+    userLanguage: currentLanguage,
+    isNewSearch,
+  }
+}
+
+// Check if user is searching for items
+// Check if user is searching for items (VERSION CORRIGÉE ET PROACTIVE)
+function isSearchingForItems(text: string, context: any = null) {
+  console.log("🔍 Checking if searching for items:", text)
+
+  // Translate first to detect keywords (especially important for Arabic)
+  const translatedText = translateToFrench(text)
+  console.log("🔄 Translated text for search detection:", translatedText)
+
+  // Keywords that indicate a lost item search
+  const lostKeywords = [
+    // French
+    "perdu", "perdus", "perdue", "perdues", "cherche", "recherche", "trouve", 
+    "trouvé", "retrouve", "retrouver",
+    // English
+    "lost", "missing", "search", "looking", "find", "found",
+    // Arabic
+    "فقدت", "فقد", "ضاع", "ضائع", "مفقود", "مفقودة", "أبحث", "ابحث", "أريد", 
+    "أجد", "وجدت",
+  ]
+
+  // Check if text contains lost keywords
+  const hasLostKeyword = lostKeywords.some((keyword) => {
+    const textLower = text.toLowerCase()
+    const translatedLower = translatedText.toLowerCase()
+    return textLower.includes(keyword.toLowerCase()) || translatedLower.includes(keyword.toLowerCase())
+  })
+
+  // Check current message for specs and city
+  const specs = extractPreciseSpecs(text)
+  const hasSpecs = specs.brands.length > 0 || specs.categories.length > 0
+  const hasCity = extractCities(text).length > 0
+
+  console.log("🔍 Has lost keyword:", hasLostKeyword)
+  console.log("🏙️ Has city:", hasCity)
+  console.log("📱 Has specs:", hasSpecs, specs)
+
+  // --- MODIFICATION PRINCIPALE ICI ---
+  // Si l'utilisateur décrit un objet (hasSpecs = true), c'est une intention de recherche.
+  // Les autres conditions (contexte, mot-clé, ville) ne sont plus obligatoires pour le déclenchement.
+  const isSearch = hasSpecs;
+
+  // Si le contexte indique une attente, on confirme que c'est une recherche
+  if (context?.isWaitingForDetails && hasSpecs) {
+    console.log("✅ Search confirmed by context (waiting for details)")
+    return true
+  }
+
+  console.log("✅ Final search decision (proactive logic):", isSearch)
+  return isSearch
+}
+
+// Get item by ID
+async function getItemById(itemId: number) {
+  try {
+    if (!process.env.DB_HOST) {
+      throw new Error("Database not configured")
+    }
+
+    const sql = `
+      SELECT 
+        f.id,
+        f.discription as description,
+        f.ville as city_id,
+        f.cat_ref as category_ref,
+        f.marque,
+        f.modele,
+        f.color,
+        f.type,
+        f.etat,
+        f.postdate,
+        c.cname as category_name,
+        v.ville as city
+      FROM fthings f
+      LEFT JOIN catagoery c ON f.cat_ref = c.cid
+      LEFT JOIN ville v ON f.ville = v.id
+      WHERE f.id = ?
+      LIMIT 1
+    `
+
+    const results = await query(sql, [itemId])
+    const resultArray = Array.isArray(results) ? results : []
+    return resultArray.length > 0 ? resultArray[0] : null
+  } catch (error) {
+    console.error("Database error:", error)
+    throw error
+  }
+}
+
+// Extract search terms with context and precision
+function extractSearchTerms(text: string, context: any = null) {
+  let city = extractCities(text)[0] || null
+  let specs = extractPreciseSpecs(text)
+
+  // Only use context if it's not a new search AND we're missing info
+  if (!context?.isNewSearch) {
+    if (!city && context?.conversationCities.length > 0) {
+      city = context.conversationCities[0]
+    }
+
+    if (
+      specs.brands.length === 0 &&
+      specs.categories.length === 0 &&
+      (context?.conversationSpecs.brands.length > 0 || context?.conversationSpecs.categories.length > 0)
+    ) {
+      specs = context.conversationSpecs
+    }
+  }
+
+  return {
+    originalText: text,
+    brands: specs.brands,
+    categories: specs.categories,
+    isSpecific: specs.isSpecific,
+    strictBrands: specs.strictBrands || [], // Add strict brands
+    city: city, // City is now optional
+  }
+}
+
+// Generate multilingual responses - Updated to not require city
+function generateResponse(type: string, data: any, language: string) {
+  const responses = {
+    missingDetails: {
+      ar: `📝 **تفاصيل أكثر مطلوبة!**
+
+أحتاج مزيد من المعلومات عن العنصر المفقود:
+
+• **ما هو العنصر؟** (هاتف، محفظة، مفاتيح)
+• **العلامة التجارية؟** (آيفون، سامسونغ، هواوي)
+• **اللون؟** (أسود، أبيض، أحمر)
+• **المدينة؟** (اختياري - يساعد في تحسين النتائج)
+
+**مثال:** "فقدت آيفون أسود" أو "أبحث عن سامسونغ"
+
+يرجى المزيد من التفاصيل! 🔍`,
+
+      fr: `📝 **Plus de détails nécessaires !**
+
+J'ai besoin de plus d'informations sur l'objet perdu :
+
+• **Quel objet ?** (téléphone, portefeuille, clés)
+• **Marque spécifique ?** (iPhone, Samsung, Huawei)
+• **Couleur ?** (noir, blanc, rouge)
+• **Ville ?** (optionnel - aide à améliorer les résultats)
+
+**Exemple :** "J'ai perdu mon iPhone noir" ou "Je cherche un Samsung"
+
+Veuillez fournir plus de détails ! 🔍`,
+
+      en: `📝 **More details needed!**
+
+I need more information about the lost item:
+
+• **What item?** (phone, wallet, keys)
+• **Specific brand?** (iPhone, Samsung, Huawei)
+• **Color?** (black, white, red)
+• **City?** (optional - helps improve results)
+
+**Example:** "I lost my black iPhone" or "Looking for Samsung"
+
+Please provide more details! 🔍`,
+    },
+    searchResults: {
+      ar: `🎯 **وجدت ${data.count} عناصر مطابقة${data.city ? ` في ${data.city}` : ""}!**
+
+${data.isSpecific ? "🎯 **بحث دقيق** - النتائج تطابق المواصفات المحددة" : "📋 **بحث عام** - قد تحتوي على عناصر مشابهة"}
+
+تحقق من البطاقات أدناه واتصل بالأشخاص الذين وجدوا العناصر.`,
+
+      fr: `🎯 **J'ai trouvé ${data.count} objets correspondants${data.city ? ` à ${data.city}` : ""} !**
+
+${data.isSpecific ? "🎯 **Recherche précise** - Les résultats correspondent aux spécifications exactes" : "📋 **Recherche générale** - Peut contenir des objets similaires"}
+
+Consultez les cartes ci-dessous et contactez les personnes qui ont trouvé les objets.`,
+
+      en: `🎯 **I found ${data.count} matching items${data.city ? ` in ${data.city}` : ""}!**
+
+${data.isSpecific ? "🎯 **Precise search** - Results match exact specifications" : "📋 **General search** - May contain similar items"}
+
+Check the cards below and contact the people who found the items.`,
+    },
+    noResults: {
+      ar: `❌ **لم يتم العثور على مطابقات${data.city ? ` في ${data.city}` : ""}**
+
+${data.isSpecific ? "🎯 **بحث دقيق** - لم يتم العثور على العنصر المحدد" : "📋 **بحث عام** - لا توجد عناصر مشابهة"}
+
+لا تقلق! يمكنك:
+
+🆕 **إنشاء إعلان جديد:**
+[CRÉER_ANNONCE]
+
+🔍 **جرب كلمات مختلفة** أو مدن أخرى
+
+💡 **نصيحة:** كن أكثر تحديداً (مثال: "آيفون 12 أسود")`,
+
+      fr: `❌ **Aucune correspondance trouvée${data.city ? ` à ${data.city}` : ""}**
+
+${data.isSpecific ? "🎯 **Recherche précise** - Aucun objet correspondant aux spécifications exactes" : "📋 **Recherche générale** - Aucun objet similaire trouvé"}
+
+Ne vous inquiétez pas ! Vous pouvez :
+
+🆕 **Créer une nouvelle annonce :**
+[CRÉER_ANNONCE]
+
+🔍 **Essayez différents mots-clés** ou d'autres villes
+
+💡 **Conseil :** Soyez plus spécifique (ex: "iPhone 12 noir")`,
+
+      en: `❌ **No matches found${data.city ? ` in ${data.city}` : ""}**
+
+${data.isSpecific ? "🎯 **Precise search** - No items matching exact specifications" : "📋 **General search** - No similar items found"}
+
+Don't worry! You can:
+
+🆕 **Create a new post:**
+[CRÉER_ANNONCE]
+
+🔍 **Try different keywords** or other cities
+
+💡 **Tip:** Be more specific (e.g., "iPhone 12 black")`,
+    },
+  }
+
+  return responses[type]?.[language] || responses[type]?.fr || "Erreur de génération de réponse"
+}
+
+// Function to validate if a result matches the search criteria
+function validateSearchResult(item: any, searchTerms: any): boolean {
+  console.log("🔍 Validating result:", {
+    itemId: item.id,
+    itemBrand: item.marque,
+    itemDescription: item.description,
+    searchBrands: searchTerms.strictBrands,
+    searchCategories: searchTerms.categories,
+    isSpecific: searchTerms.isSpecific,
+  })
+
+  // Validation spéciale pour les animaux - être plus permissif
+  if (
+    searchTerms.categories.includes("chien") ||
+    searchTerms.categories.includes("chat") ||
+    searchTerms.categories.includes("animal")
+  ) {
+    const itemDescription = (item.description || "").toLowerCase()
+    const itemType = (item.type || "").toLowerCase()
+    const originalSearch = searchTerms.originalText.toLowerCase()
+
+    // Si l'utilisateur cherche un chien et que l'objet est un chien, c'est valide
+    if (
+      (originalSearch.includes("chien") || originalSearch.includes("dog")) &&
+      (itemDescription.includes("chien") || itemDescription.includes("dog") || itemType.includes("chien"))
+    ) {
+      console.log(`✅ Accepted: Dog match found`)
+      return true
+    }
+
+    // Si l'utilisateur cherche un chat et que l'objet est un chat, c'est valide
+    if (
+      (originalSearch.includes("chat") || originalSearch.includes("cat")) &&
+      (itemDescription.includes("chat") || itemDescription.includes("cat") || itemType.includes("chat"))
+    ) {
+      console.log(`✅ Accepted: Cat match found`)
+      return true
+    }
+  }
+
+  // Si l'utilisateur cherche un contenu spécifique dans un sac
+  if (searchTerms.categories.includes("sac") && searchTerms.originalText) {
+    const itemDescription = (item.description || "").toLowerCase()
+    const itemType = (item.type || "").toLowerCase()
+    const originalSearch = searchTerms.originalText.toLowerCase()
+
+    // Détecter si l'utilisateur cherche un contenu spécifique
+    const specificContentKeywords = [
+      "tapis de prière",
+      "prayer mat",
+      "documents",
+      "papiers",
+      "vêtements",
+      "clothes",
+      "livres",
+      "books",
+      "médicaments",
+      "medicine",
+      "bijoux",
+      "jewelry",
+      "argent",
+      "money",
+      "cartes",
+      "cards",
+    ]
+
+    let searchedContent = null
+    for (const keyword of specificContentKeywords) {
+      if (originalSearch.includes(keyword)) {
+        searchedContent = keyword
+        break
+      }
+    }
+
+    if (searchedContent) {
+      console.log(`🎯 User is looking for specific content: ${searchedContent}`)
+
+      // Vérifier si l'objet contient le contenu recherché
+      const hasSearchedContent = itemDescription.includes(searchedContent) || itemType.includes(searchedContent)
+
+      if (!hasSearchedContent) {
+        console.log(`❌ Rejected: Bag doesn't contain searched content "${searchedContent}"`)
+        return false
+      }
+
+      // Exclure les sacs avec du contenu non pertinent
+      const irrelevantForPrayerMat = [
+        "jouets",
+        "toys",
+        "enfants",
+        "children",
+        "aire de jeu",
+        "playground",
+        "jeux",
+        "games",
+      ]
+
+      if (searchedContent.includes("tapis de prière") || searchedContent.includes("prayer mat")) {
+        const hasIrrelevantContent = irrelevantForPrayerMat.some(
+          (keyword) => itemDescription.includes(keyword) || itemType.includes(keyword),
+        )
+
+        if (hasIrrelevantContent) {
+          console.log(`❌ Rejected: Bag contains irrelevant content for prayer mat search`)
+          return false
+        }
+      }
+    }
+  }
+
+  // Si c'est une recherche de marque spécifique, être très strict
+  if (searchTerms.isSpecific && searchTerms.strictBrands.length > 0) {
+    const itemBrand = (item.marque || "").toLowerCase()
+    const itemDescription = (item.description || "").toLowerCase()
+    const itemModel = (item.modele || "").toLowerCase()
+    const itemType = (item.type || "").toLowerCase()
+
+    // Vérifier si une des marques strictes correspond
+    const hasStrictBrandMatch = searchTerms.strictBrands.some((strictBrand) => {
+      const brandLower = strictBrand.toLowerCase()
+
+      // Pour iPhone, accepter seulement Apple/iPhone
+      if (strictBrand === "iphone" || strictBrand === "apple") {
+        return (
+          (itemBrand.includes("apple") ||
+            itemBrand.includes("iphone") ||
+            itemModel.includes("iphone") ||
+            itemDescription.includes("iphone") ||
+            itemType.includes("iphone")) &&
+          !(
+            itemBrand.includes("samsung") ||
+            itemBrand.includes("huawei") ||
+            itemBrand.includes("xiaomi") ||
+            itemBrand.includes("nokia") ||
+            itemBrand.includes("lg") ||
+            itemBrand.includes("sony")
+          )
+        )
+      }
+
+      // Pour Samsung, accepter seulement Samsung
+      if (strictBrand === "samsung") {
+        return (
+          (itemBrand.includes("samsung") ||
+            itemModel.includes("samsung") ||
+            itemDescription.includes("samsung") ||
+            itemType.includes("samsung")) &&
+          !(
+            itemBrand.includes("apple") ||
+            itemBrand.includes("iphone") ||
+            itemBrand.includes("huawei") ||
+            itemBrand.includes("xiaomi")
+          )
+        )
+      }
+
+      // Pour les autres marques, vérifier la correspondance exacte
+      return (
+        itemBrand.includes(brandLower) ||
+        itemModel.includes(brandLower) ||
+        itemDescription.includes(brandLower) ||
+        itemType.includes(brandLower)
+      )
+    })
+
+    if (!hasStrictBrandMatch) {
+      console.log(`❌ Rejected: Item doesn't match strict brand requirements`)
+      return false
+    }
+  }
+
+  console.log(`✅ Accepted: Item matches search criteria`)
+  return true
+}
+
+// Nouvelle fonction pour valider les résultats avec l'IA - Version moins stricte pour les animaux
+// Nouvelle fonction pour valider les résultats avec l'IA - Version moins stricte pour les animaux
+async function validateResultWithAI(userInput: string, item: any, language: string): Promise<boolean> {
+  if (!process.env.OPENAI_API_KEY) {
+    console.log("⚠️ OpenAI not configured, skipping AI validation")
+    return true // Fallback: accepter le résultat
+  }
+
+  try {
+    // --- MODIFICATION ICI : Ajout de plus de détails dans le prompt ---
+    const validationPrompts = {
+      ar: `أنت خبير في مطابقة الأشياء المفقودة. قارن بين ما يبحث عنه المستخدم وما وُجد في قاعدة البيانات.
+
+طلب المستخدم: "${userInput}"
+
+العنصر الموجود (التفاصيل الكاملة):
+- الوصف: ${item.description || "غير متوفر"}
+- الفئة: ${item.category_name || "غير متوفر"}
+- العلامة التجارية: ${item.marque || "غير متوفر"}
+- الطراز: ${item.modele || "غير متوفر"}
+- اللون: ${item.color || "غير متوفر"}
+- الحالة: ${item.etat || "غير متوفر"}
+- النوع: ${item.type || "غير متوفر"}
+- المدينة: ${item.city || "غير متوفر"}
+- تاريخ النشر: ${item.postdate ? new Date(item.postdate).toLocaleString('ar-MA') : "غير متوفر"}
+
+للحيوانات الأليفة: إذا كان المستخدم يبحث عن حيوان (كلب، قط) وكان العنصر الموجود حيوان من نفس النوع، فهو مطابق حتى لو اختلفت التفاصيل الدقيقة.
+
+هل هذا العنصر يطابق ما يبحث عنه المستخدم؟ أجب بـ "نعم" أو "لا" فقط.`,
+
+      fr: `Tu es un expert en correspondance d'objets perdus. Compare ce que l'utilisateur recherche avec ce qui a été trouvé dans la base de données.
+
+Demande de l'utilisateur: "${userInput}"
+
+Objet trouvé (Détails complets):
+- Description: ${item.description || "Non disponible"}
+- Catégorie: ${item.category_name || "Non disponible"}
+- Marque: ${item.marque || "Non disponible"}
+- Modèle: ${item.modele || "Non disponible"}
+- Couleur: ${item.color || "Non disponible"}
+- État: ${item.etat || "Non disponible"}
+- Type: ${item.type || "Non disponible"}
+- Ville: ${item.city || "Non disponible"}
+- Date de publication: ${item.postdate ? new Date(item.postdate).toLocaleString('fr-FR') : "Non disponible"}
+
+Pour les animaux de compagnie: Si l'utilisateur cherche un animal (chien, chat) et que l'objet trouvé est un animal du même type, c'est une correspondance même si les détails précis diffèrent.
+
+Est-ce que cet objet correspond à ce que l'utilisateur recherche ? Réponds uniquement par "OUI" ou "NON".`,
+
+      en: `You are an expert in matching lost items. Compare what the user is looking for with what was found in the database.
+
+User request: "${userInput}"
+
+Found item (Full details):
+- Description: ${item.description || "Not available"}
+- Category: ${item.category_name || "Not available"}
+- Brand: ${item.marque || "Not available"}
+- Model: ${item.modele || "Not available"}
+- Color: ${item.color || "Not available"}
+- Condition: ${item.etat || "Not available"}
+- Type: ${item.type || "Not available"}
+- City: ${item.city || "Not available"}
+- Posted on: ${item.postdate ? new Date(item.postdate).toLocaleString('en-US') : "Not available"}
+
+For pets: If the user is looking for an animal (dog, cat) and the found item is an animal of the same type, it's a match even if precise details differ.
+
+Does this item match what the user is looking for? Answer only "YES" or "NO".`,
+    }
+    // --- FIN DE LA MODIFICATION ---
+
+    const { text } = await generateText({
+      model: openai("gpt-4o"),
+      messages: [
+        {
+          role: "system",
+          content:
+            "Tu es un expert en correspondance d'objets perdus. Pour les animaux de compagnie, sois plus flexible - si l'utilisateur cherche un chien et que l'objet trouvé est un chien, c'est généralement une correspondance valide. Réponds uniquement par OUI ou NON.",
+        },
+        {
+          role: "user",
+          content: validationPrompts[language] || validationPrompts.fr,
+        },
+      ],
+      maxTokens: 10,
+    })
+
+    const response = text.trim().toLowerCase()
+    const isValid = response.includes("oui") || response.includes("yes") || response.includes("نعم")
+
+    console.log(`🤖 AI Validation for item #${item.id}: ${isValid ? "✅ VALID" : "❌ INVALID"} (Response: ${text})`)
+    return isValid
+  } catch (error) {
+    console.error("AI validation error:", error)
+    return true // En cas d'erreur, accepter le résultat
+  }
+}
+
+// Fonction d'extraction améliorée avec règles strictes
+// Fonction d'extraction améliorée avec règles strictes
+function extractStrictSearchCriteria(text: string) {
+  const translatedText = translateToFrench(text)
+  const lowerText = translatedText.toLowerCase()
+  const originalLower = text.toLowerCase()
+
+  console.log("🔍 Extracting search criteria from:", text)
+
+  // Extraction de la ville (OPTIONNELLE maintenant)
+  const cities = extractCities(text)
+  const city = cities[0] || null
+
+  // Extraction des spécifications avec modèles exacts
+  const specs = extractPreciseSpecs(text)
+
+  // --- MODIFICATION ICI : Ajout de la gestion des synonymes ---
+  let searchSynonyms = []
+  for (const category of specs.categories) {
+    if (animalSynonyms[category]) {
+      searchSynonyms.push(...animalSynonyms[category])
+    } else {
+      searchSynonyms.push(category) // Garder le terme original pour les autres catégories
+    }
+  }
+  searchSynonyms = [...new Set(searchSynonyms)] // Supprimer les doublons
+  // --- FIN DE LA MODIFICATION ---
+
+
+  // Extraction du modèle spécifique
+  let specificModel = null
+  const modelPatterns = [
+    // Car key patterns
+    /clé\s*(de\s*)?(voiture|auto|automobile)\s*([a-z]+)/i,
+    /([a-z]+)\s*clé/i,
+    // Samsung models
+    /samsung\s*(galaxy\s*)?(a\d+|s\d+|note\s*\d+|j\d+|m\d+)/i,
+    // iPhone models
+    /iphone\s*(\d+(\s*pro)?(\s*max)?|se|xr|xs|x)/i,
+    // Huawei models
+    /huawei\s*(p\d+|mate\s*\d+|nova\s*\d+|y\d+)/i,
+    // Generic model patterns
+    /\b([a-z]+\s*\d+[a-z]*)\b/i,
+  ]
+
+  for (const pattern of modelPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      specificModel = match[1] || match[0]
+      console.log(`📱 Found specific model: ${specificModel}`)
+      break
+    }
+  }
+
+  // Détecter les marques de voiture
+  const carBrands = [
+    "renault",
+    "peugeot",
+    "citroën",
+    "citroen",
+    "volkswagen",
+    "vw",
+    "mercedes",
+    "bmw",
+    "audi",
+    "ford",
+    "opel",
+    "fiat",
+    "toyota",
+    "nissan",
+    "hyundai",
+    "kia",
+    "seat",
+    "skoda",
+    "dacia",
+  ]
+
+  let detectedCarBrand = null
+  for (const brand of carBrands) {
+    if (lowerText.includes(brand) || originalLower.includes(brand)) {
+      detectedCarBrand = brand
+      specs.brands.push(brand)
+      specs.categories.push("clé")
+      specs.isSpecific = true
+      console.log(`🚗 Found car brand: ${brand}`)
+      break
+    }
+  }
+
+  return {
+    originalText: text,
+    city: city,
+    brands: specs.brands,
+    categories: specs.categories,
+    searchSynonyms: searchSynonyms.length > 0 ? searchSynonyms : specs.categories, // Utiliser les synonymes si disponibles
+    color: specs.color,
+    specificModel: specificModel,
+    isSpecific: specs.isSpecific,
+    hasStrictCriteria: !!(specs.brands.length > 0 || specs.categories.length > 0), // Ville plus obligatoire
+  }
+}
+
+// Recherche en base avec règles strictes
+// Recherche en base avec règles strictes (VERSION FINALE CORRIGÉE ET ROBUSTE)
+async function strictDatabaseSearch(searchCriteria: any) {
+  try {
+    if (!process.env.DB_HOST) {
+      console.log("⚠️ Database not configured")
+      return { results: [], hasStrictCriteria: false }
+    }
+
+    if (!searchCriteria.hasStrictCriteria) {
+      console.log("❌ Strict search requires brand OR category")
+      return { results: [], hasStrictCriteria: false }
+    }
+
+    let sql = `
+      SELECT 
+        f.id,
+        f.discription as description,
+        f.ville as city_id,
+        f.cat_ref as category_ref,
+        f.marque,
+        f.modele,
+        f.color,
+        f.type,
+        f.etat,
+        f.postdate,
+        c.cname as category_name,
+        v.ville as city
+      FROM fthings f
+      LEFT JOIN catagoery c ON f.cat_ref = c.cid
+      LEFT JOIN ville v ON f.ville = v.id
+      WHERE 1=1
+    `
+    const params = []
+
+    // RÈGLE 1: Filtre de ville (optionnel)
+    if (searchCriteria.city) {
+      sql += ` AND LOWER(v.ville) = LOWER(?)`
+      params.push(searchCriteria.city)
+      console.log(`🏙️ City filter applied: ${searchCriteria.city}`)
+    }
+
+    // Construction robuste de la clause de recherche (marques ET/OU catégories)
+    const hasBrands = searchCriteria.brands && searchCriteria.brands.length > 0
+    const hasCategories = searchCriteria.searchSynonyms && searchCriteria.searchSynonyms.length > 0
+    const searchConditions = []
+
+    if (hasBrands) {
+      const brandPattern = searchCriteria.brands.map(b => b.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join('|')
+      searchConditions.push(`(
+        LOWER(f.marque) REGEXP '\\\\b(${brandPattern})\\\\b' OR
+        LOWER(f.discription) REGEXP '\\\\b(${brandPattern})\\\\b' OR
+        LOWER(f.type) REGEXP '\\\\b(${brandPattern})\\\\b'
+      )`)
+    }
+
+    if (hasCategories) {
+      const categoryPattern = searchCriteria.searchSynonyms.map(s => s.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join('|')
+      searchConditions.push(`(
+        LOWER(f.discription) REGEXP '\\\\b(${categoryPattern})\\\\b' OR
+        LOWER(c.cname) REGEXP '\\\\b(${categoryPattern})\\\\b' OR
+        LOWER(f.type) REGEXP '\\\\b(${categoryPattern})\\\\b'
+      )`)
+    }
+    
+    if (searchConditions.length > 0) {
+      sql += ` AND (${searchConditions.join(" OR ")})`
+    }
+
+    // RÈGLE 4: Filtre de modèle exact
+    if (searchCriteria.specificModel) {
+      const modelPattern = searchCriteria.specificModel.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      sql += ` AND (LOWER(f.modele) REGEXP '\\\\b${modelPattern}\\\\b' OR LOWER(f.discription) REGEXP '\\\\b${modelPattern}\\\\b')`
+    }
+
+    // RÈGLE 5: Filtre de couleur exacte
+    if (searchCriteria.color) {
+      const colorPattern = searchCriteria.color.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      sql += ` AND (LOWER(f.color) REGEXP '\\\\b${colorPattern}\\\\b' OR LOWER(f.discription) REGEXP '\\\\b${colorPattern}\\\\b')`
+    }
+
+    // --- CORRECTION MAJEURE : Tri des résultats robuste ---
+    const orderByClauses = []
+    
+    if (hasBrands) {
+        const brandPattern = searchCriteria.brands[0].toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        orderByClauses.push(`(CASE WHEN LOWER(f.marque) REGEXP '\\\\b${brandPattern}\\\\b' THEN 1 ELSE 2 END)`);
+    }
+
+    if (searchCriteria.specificModel) {
+        const modelPattern = searchCriteria.specificModel.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        orderByClauses.push(`(CASE WHEN LOWER(f.modele) REGEXP '\\\\b${modelPattern}\\\\b' THEN 1 ELSE 2 END)`);
+    }
+
+    // Toujours trier par date en dernier pour la fraîcheur
+    orderByClauses.push('f.postdate DESC');
+
+    sql += ` ORDER BY ${orderByClauses.join(', ')} LIMIT 50`;
+    // --- FIN DE LA CORRECTION ---
+
+    console.log("🔍 Executing final robust database search...")
+    console.log("Generated SQL:", sql.replace(/\s+/g, ' ').trim()); // Log pour le débogage
+
+    const results = await query(sql, params)
+    const resultArray = Array.isArray(results) ? results : []
+
+    console.log(`📊 Database search found ${resultArray.length} results`)
+    
+    return {
+      results: resultArray,
+      hasStrictCriteria: true,
+      searchCriteria: searchCriteria,
+    }
+  } catch (error) {
+    console.error("Database search error:", error)
+    return { results: [], hasStrictCriteria: false, error: error }
+  }
+}
+
+// Fonction principale de validation avec IA
+async function validateAndFilterResults(userInput: string, results: any[], language: string) {
+  if (results.length === 0) {
+    return []
+  }
+
+  console.log(`🤖 Starting AI validation for ${results.length} results...`)
+
+  const validatedResults = []
+
+  // Valider chaque résultat avec l'IA
+  for (const item of results) {
+    const isValid = await validateResultWithAI(userInput, item, language)
+
+    if (isValid) {
+      validatedResults.push(item)
+      console.log(`✅ Item #${item.id} validated by AI`)
+    } else {
+      console.log(`❌ Item #${item.id} rejected by AI`)
+    }
+
+    // Limiter à 5 résultats validés maximum
+    if (validatedResults.length >= 5) {
+      break
+    }
+  }
+
+  console.log(`🎯 Final validated results: ${validatedResults.length}/${results.length}`)
+  return validatedResults
+}
+
+export async function POST(req: Request) {
+  try {
+    const { messages } = await req.json()
+    const lastMessage = messages[messages.length - 1]
+    const userInput = lastMessage?.content || ""
+
+    console.log("🔍 Processing user input:", userInput)
+
+    // Analyze conversation context
+    const context = analyzeConversationContext(messages)
+    console.log("📋 Context:", {
+      userLanguage: context.userLanguage,
+      isNewSearch: context.isNewSearch,
+      conversationSpecs: context.conversationSpecs,
+      conversationCities: context.conversationCities,
+    })
+
+    // Check if user is asking about a specific item ID
+    const itemId = isAskingAboutItemId(userInput)
+    if (itemId) {
+      if (!process.env.DB_HOST) {
+        const errorMessages = {
+          ar: "❌ قاعدة البيانات غير متصلة. لا يمكنني البحث عن تفاصيل العناصر الآن.",
+          fr: "❌ Base de données non connectée. Je ne peux pas rechercher les détails des objets pour le moment.",
+          en: "❌ Database not connected. I can't search for item details right now.",
+        }
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: errorMessages[context.userLanguage] || errorMessages.fr,
+        })
+      }
+
+      try {
+        const item = await getItemById(itemId)
+
+        if (item) {
+          const responses = {
+            ar: `🎯 **تم العثور على العنصر #${item.id}!**\n\n📍 **المدينة:** ${item.city || "غير معروفة"}\n📝 **الوصف:** ${item.description || "لا يوجد وصف"}\n\n**التفاصيل:**\n${item.category_name ? `• **الفئة:** ${item.category_name}\n` : ""}${item.marque ? `• **العلامة التجارية:** ${item.marque}\n` : ""}${item.modele ? `• **الطراز:** ${item.modele}\n` : ""}${item.color ? `• **اللون:** ${item.color}\n` : ""}${item.type ? `• **النوع:** ${item.type}\n` : ""}${item.etat ? `• **الحالة:** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **تاريخ النشر:** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[اتصل بالواجد](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+            fr: `🎯 **Objet #${item.id} trouvé !**\n\n📍 **Ville :** ${item.city || "Inconnue"}\n📝 **Description :** ${item.description || "Aucune description disponible"}\n\n**Détails :**\n${item.category_name ? `• **Catégorie :** ${item.category_name}\n` : ""}${item.marque ? `• **Marque :** ${item.marque}\n` : ""}${item.modele ? `• **Modèle :** ${item.modele}\n` : ""}${item.color ? `• **Couleur :** ${item.color}\n` : ""}${item.type ? `• **Type :** ${item.type}\n` : ""}${item.etat ? `• **État :** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **Posté le :** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[Contacter le trouveur](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+            en: `🎯 **Item #${item.id} found!**\n\n📍 **City:** ${item.city || "Unknown"}\n📝 **Description:** ${item.description || "No description available"}\n\n**Details:**\n${item.category_name ? `• **Category:** ${item.category_name}\n` : ""}${item.marque ? `• **Brand:** ${item.marque}\n` : ""}${item.modele ? `• **Model:** ${item.modele}\n` : ""}${item.color ? `• **Color:** ${item.color}\n` : ""}${item.type ? `• **Type:** ${item.type}\n` : ""}${item.etat ? `• **Condition:** ${item.etat}\n` : ""}\n${item.postdate ? `📅 **Posted:** ${new Date(item.postdate).toLocaleDateString()}\n` : ""}\n🔗 **[Contact the finder](https://mafqoodat.ma/trouve.php?contact=${item.id})**`,
+          }
+
+          return NextResponse.json({
+            id: Date.now().toString(),
+            role: "assistant",
+            content: responses[context.userLanguage] || responses.fr,
+          })
+        } else {
+          const notFoundMessages = {
+            ar: `❌ **العنصر #${itemId} غير موجود**\n\nلم أتمكن من العثور على عنصر بالرقم #${itemId} في قاعدة البيانات.`,
+            fr: `❌ **Objet #${itemId} non trouvé**\n\nJe n'ai pas pu trouver un objet avec l'ID #${itemId} dans notre base de données.`,
+            en: `❌ **Item #${itemId} not found**\n\nI couldn't find an item with ID #${itemId} in our database.`,
+          }
+          return NextResponse.json({
+            id: Date.now().toString(),
+            role: "assistant",
+            content: notFoundMessages[context.userLanguage] || notFoundMessages.fr,
+          })
+        }
+      } catch (error) {
+        const errorMessages = {
+          ar: `❌ **خطأ في البحث عن العنصر #${itemId}**\n\nحدثت مشكلة في الوصول إلى قاعدة البيانات.`,
+          fr: `❌ **Erreur lors de la recherche de l'objet #${itemId}**\n\nIl y a eu un problème d'accès à la base de données.`,
+          en: `❌ **Error looking up Item #${itemId}**\n\nThere was a problem accessing the database.`,
+        }
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: errorMessages[context.userLanguage] || errorMessages.fr,
+        })
+      }
+    }
+
+    // Check if user is searching for lost items
+    
+  const isSearchQuery = isSearchingForItems(userInput, context)
+    console.log("🔍 Is search query:", isSearchQuery)
+
+    // Dans la fonction POST, remplacer la section de recherche par :
+
+    if (isSearchQuery) {
+      // Extraction des critères de recherche stricts
+      const searchCriteria = extractStrictSearchCriteria(userInput)
+      console.log("🔍 Strict search criteria:", searchCriteria)
+
+      // Étape 1: Recherche stricte en base de données
+      const searchResult = await strictDatabaseSearch(searchCriteria)
+
+      // Vérifier si les critères stricts sont remplis
+      if (!searchResult.hasStrictCriteria) {
+        const response = generateResponse("missingDetails", {}, context.userLanguage)
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: response,
+        })
+      }
+
+      // Étape 2: Validation des résultats avec l'IA
+      const validatedResults = await validateAndFilterResults(userInput, searchResult.results, context.userLanguage)
+
+      // Étape 3: Générer la réponse finale
+      if (validatedResults.length > 0) {
+        // Générer une réponse personnalisée avec l'IA
+        let aiResponse = ""
+
+        if (process.env.OPENAI_API_KEY) {
+          try {
+            const responsePrompts = {
+              ar: `المستخدم يبحث عن: "${userInput}"
+
+وجدت ${validatedResults.length} عناصر مطابقة. اكتب رد مهذب وودود باللغة العربية يخبر المستخدم أنك وجدت نتائج مطابقة وأنه يمكنه مراجعة البطاقات أدناه للتواصل مع الأشخاص الذين وجدوا هذه العناصر.`,
+
+              fr: `L'utilisateur recherche: "${userInput}"
+
+J'ai trouvé ${validatedResults.length} objets correspondants. Écris une réponse polie et amicale en français qui informe l'utilisateur que tu as trouvé des résultats correspondants et qu'il peut consulter les cartes ci-dessous pour contacter les personnes qui ont trouvé ces objets.`,
+
+              en: `The user is looking for: "${userInput}"
+
+I found ${validatedResults.length} matching items. Write a polite and friendly response in English that informs the user that you found matching results and they can check the cards below to contact the people who found these items.`,
+            }
+
+            const { text } = await generateText({
+              model: openai("gpt-4o"),
+              messages: [
+                {
+                  role: "system",
+                  content:
+                    "Tu es un assistant serviable pour une plateforme d'objets perdus. Sois poli, empathique et encourageant.",
+                },
+                {
+                  role: "user",
+                  content: responsePrompts[context.userLanguage] || responsePrompts.fr,
+                },
+              ],
+              maxTokens: 200,
+            })
+
+            aiResponse = text
+          } catch (error) {
+            console.error("AI response generation error:", error)
+            // Fallback response
+            const fallbackResponses = {
+              ar: `🎯 **وجدت ${validatedResults.length} عناصر مطابقة لبحثك!**\n\nتحقق من البطاقات أدناه واتصل بالأشخاص الذين وجدوا العناصر.`,
+              fr: `🎯 **J'ai trouvé ${validatedResults.length} objets correspondant à votre recherche !**\n\nConsultez les cartes ci-dessous et contactez les personnes qui ont trouvé les objets.`,
+              en: `🎯 **I found ${validatedResults.length} items matching your search!**\n\nCheck the cards below and contact the people who found the items.`,
+            }
+            aiResponse = fallbackResponses[context.userLanguage] || fallbackResponses.fr
+          }
+        }
+
+        const missingPersons = validatedResults.map((item) => ({
+          id: item.id.toString(),
+          description: item.description || "Aucune description disponible",
+          city: item.city || "Inconnue",
+          category_name: item.category_name,
+          marque: item.marque,
+          modele: item.modele,
+          color: item.color,
+          type: item.type,
+          etat: item.etat,
+          postdate: item.postdate,
+          contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`,
+        }))
+
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: aiResponse,
+          missingPersons: missingPersons,
+        })
+      } else {
+        // Aucun résultat validé - suggérer de créer une annonce
+        const noResultsResponses = {
+          ar: `❌ **لم أجد أي عناصر تطابق بحثك بدقة**\n\nبحثت عن: "${userInput}"\n\n🆕 **أنشئ إعلان جديد:**\n[CRÉER_ANNONCE]\n\n💡 **نصيحة:** تأكد من كتابة العلامة التجارية والمدينة بوضوح`,
+          fr: `❌ **Je n'ai trouvé aucun objet correspondant exactement à votre recherche**\n\nVous cherchiez: "${userInput}"\n\n🆕 **Créez une nouvelle annonce:**\n[CRÉER_ANNONCE]\n\n💡 **Conseil:** Assurez-vous d'écrire clairement la marque et la ville`,
+          en: `❌ **I found no items matching your search exactly**\n\nYou were looking for: "${userInput}"\n\n🆕 **Create a new post:**\n[CRÉER_ANNONCE]\n\n💡 **Tip:** Make sure to clearly write the brand and city`,
+        }
+
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: noResultsResponses[context.userLanguage] || noResultsResponses.fr,
+        })
+      }
+    } else {
+      // Use ChatGPT API for general conversation with fallback
+      console.log("💬 Using general conversation mode")
+
+      // Fallback response if OpenAI is not available
+      const fallbackResponses = {
+        ar: 'أنا هنا لمساعدتك في العثور على الأشياء المفقودة في المغرب. إذا فقدت شيئًا، أخبرني بنوع الشيء والعلامة التجارية المحددة وسأبحث لك في قاعدة البيانات!\n\n**مثال:** "فقدت آيفون أسود" أو "أبحث عن سامسونغ"',
+        fr: 'Je suis là pour vous aider à retrouver vos objets perdus au Maroc. Si vous avez perdu quelque chose, dites-moi quel objet et la marque spécifique et je rechercherai dans notre base de données !\n\n**Exemple :** "J\'ai perdu mon iPhone noir" ou "Je cherche un Samsung"',
+        en: 'I\'m here to help you find your lost items in Morocco. If you\'ve lost something, tell me what item and the specific brand and I\'ll search our database for you!\n\n**Example:** "I lost my black iPhone" or "Looking for Samsung"',
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: fallbackResponses[context.userLanguage] || fallbackResponses.fr,
+        })
+      }
+
+      try {
+        const systemPrompts = {
+          ar: "أنت مساعد لمنصة مغربية للأشياء المفقودة والموجودة تسمى مفقودات. تساعد المستخدمين في العثور على الأشياء المفقودة بدقة عالية. عندما يذكر المستخدم علامة تجارية محددة (مثل آيفون، سامسونغ)، ابحث عن تلك العلامة بالضبط. رد دائماً بالعربية. كن مفيداً ومتعاطفاً.",
+          fr: "Tu es un assistant pour une plateforme marocaine d'objets perdus et trouvés appelée Mafqoodat. Tu aides les utilisateurs avec les objets perdus et trouvés avec une haute précision. Quand l'utilisateur mentionne une marque spécifique (comme iPhone, Samsung), recherche exactement cette marque. Réponds toujours en français. Sois utile et empathique.",
+          en: "You are an assistant for a Moroccan lost and found platform called Mafqoodat. You help users with lost and found items with high precision. When the user mentions a specific brand (like iPhone, Samsung), search for exactly that brand. Always respond in English. Be helpful and empathetic.",
+        }
+
+        const { text } = await generateText({
+          model: openai("gpt-4o"),
+          messages: [
+            {
+              role: "system",
+              content: systemPrompts[context.userLanguage] || systemPrompts.fr,
+            },
+            ...messages.map((msg) => ({
+              role: msg.role,
+              content: msg.content,
+            })),
+          ],
+        })
+
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: text,
+        })
+      } catch (error) {
+        console.error("OpenAI API error:", error)
+        return NextResponse.json({
+          id: Date.now().toString(),
+          role: "assistant",
+          content: fallbackResponses[context.userLanguage] || fallbackResponses.fr,
+        })
+      }
+    }
+  } catch (error) {
+    console.error("Chat API error:", error)
+    return NextResponse.json({
+      id: Date.now().toString(),
+      role: "assistant",
+      content: "Une erreur s'est produite. Veuillez réessayer ou actualiser la page.",
+    })
+  }
+}

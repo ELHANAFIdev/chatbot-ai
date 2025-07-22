@@ -25,6 +25,7 @@ function createPool() {
           timeout: 30000,
           reconnect: true,
         })
+
         console.log("Database pool created successfully")
       } else {
         console.warn("Database credentials not provided. Using fallback data.")
@@ -56,6 +57,21 @@ export async function query(sql: string, params: any[] = []) {
   } catch (error) {
     console.error("Database query error:", error)
     throw error
+  }
+}
+
+// Test database connection
+export async function testConnection() {
+  try {
+    const connection = createPool()
+    if (!connection) {
+      return { success: false, message: "Database not configured" }
+    }
+
+    await connection.execute("SELECT 1")
+    return { success: true, message: "Database connected successfully" }
+  } catch (error: any) {
+    return { success: false, message: error.message }
   }
 }
 
