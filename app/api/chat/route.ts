@@ -1,57 +1,47 @@
-// FICHIER : app/api/chat/route.ts
+import { streamText, type CoreMessage } from "ai"
+import { openai } from "@ai-sdk/openai"
+import { z } from "zod"
+import { query } from "@/lib/db"
+import { NextResponse } from "next/server"
 
-import { streamText, type CoreMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
-import { z } from "zod";
-import { query } from "@/lib/db";
-import { NextResponse } from "next/server";
+export const maxDuration = 30
 
-export const maxDuration = 30;
-
-// La fonction de recherche est performante, nous la conservons.
+// 🔍 Fonction de recherche directe
 async function searchDatabase(args: { 
-    item: string; 
-    brand?: string; 
-    color?: string; 
-    city?: string; 
+  item: string
+  brand?: string
+  color?: string
+  city?: string
 }) {
-    console.log("🤖 AI is calling the database tool with arguments:", args);
-    try {
-        const lowerItem = args.item.toLowerCase();
-        const keywordsToSearch = lowerItem.split(' ').filter(w => w.length > 2 && !['pour', 'de', 'le', 'la', 'un', 'une'].includes(w));
-        if (keywordsToSearch.length === 0 && lowerItem) keywordsToSearch.push(lowerItem);
-        
-        const whereConditions: string[] = [];
-        const params: string[] = [];
+  console.log("Server: 🔵 searchDatabase START", args)
+  try {
+    // Construction des mots-clés (l'IA est maintenant chargée de les fournir en français)
+    let allKeywords: string[] = []
+    if (args.item) allKeywords.push(...args.item.toLowerCase().split(" "))
+    if (args.brand) allKeywords.push(args.brand.toLowerCase())
+    if (args.color) allKeywords.push(args.color.toLowerCase())
+    allKeywords = [...new Set(allKeywords.filter((w) => w.length > 2))]
+    console.log(`Server: 🧠 Combined search keywords (French): [${allKeywords.join(", ")}]`)
 
-        if (keywordsToSearch.length > 0) {
-            const keywordConditions = keywordsToSearch.map(keyword => {
-                // Using LIKE %keyword% for more flexible matching
-                params.push(`%${keyword}%`, `%${keyword}%`); 
-                return `(LOWER(f.discription) LIKE ? OR LOWER(f.type) LIKE ?)`;
-            }).join(' OR '); 
-            whereConditions.push(`(${keywordConditions})`);
-        }
+    const whereConditions: string[] = []
+    const params: string[] = []
 
-        if (args.city) {
-            const escapedCity = args.city.toLowerCase(); // No need for regexp escaping
-            whereConditions.push("LOWER(v.ville) LIKE ?");
-            params.push(`%${escapedCity}%`); 
-        }
-        if (args.brand) {
-            const escapedBrand = args.brand.toLowerCase(); // No need for regexp escaping
-            whereConditions.push("LOWER(f.marque) LIKE ?");
-            params.push(`%${escapedBrand}%`);
-        }
-        if (args.color) {
-            const escapedColor = args.color.toLowerCase(); // No need for regexp escaping
-            whereConditions.push("(LOWER(f.color) LIKE ? OR LOWER(f.discription) LIKE ?)");
-            params.push(`%${escapedColor}%`, `%${escapedColor}%`); 
-        }
-        
-        if (whereConditions.length === 0) return [];
+    allKeywords.forEach((keyword) => {
+      whereConditions.push(`LOWER(f.discription) LIKE ?`)
+      params.push(`%${keyword}%`)
+    })
 
-        let sql = `
+    if (args.city) {
+      whereConditions.push(`LOWER(v.ville) LIKE ?`)
+      params.push(`%${args.city.toLowerCase()}%`)
+    }
+
+    if (whereConditions.length === 0) {
+      console.log("Server: ⚠️ No search conditions, returning empty results.")
+      return []
+    }
+
+    const sql = `
           SELECT 
             f.id, f.discription as description, v.ville as city, c.cname as category_name,
             f.marque, f.modele, f.color, f.type, f.etat, f.postdate
@@ -59,71 +49,134 @@ async function searchDatabase(args: {
           LEFT JOIN catagoery c ON f.cat_ref = c.cid
           LEFT JOIN ville v ON f.ville = v.id
           WHERE ${whereConditions.join(" AND ")}
-          ORDER BY f.postdate DESC LIMIT 5;`;
-        
-        const results = await query(sql, params);
-        return Array.isArray(results) ? results.map(item => ({...item, id: String(item.id), contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`})) : [];
+            ORDER BY f.postdate DESC LIMIT 5;
+        `
+
+    console.log("Server: 🔍 Executing SQL:", sql.trim().replace(/\s+/g, " "))
+    console.log("Server: 📦 With params:", params)
+
+    const results = await query(sql, params)
+    console.log("Server: 🟢 searchDatabase END - Rows found:", Array.isArray(results) ? results.length : 0)
+
+    return Array.isArray(results)
+      ? results.map((item) => ({
+          ...item,
+          id: String(item.id),
+          contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`,
+        }))
+      : []
     } catch (error) {
-        console.error("Database search tool error:", error);
-        return [];
+    console.error("Server: ❌ Database search error:", error)
+    return []
     }
 }
 
-// Le point d'entrée unique de l'API
+// ✅ Le point d'entrée principal
 export async function POST(req: Request) {
-    const { messages }: { messages: CoreMessage[] } = await req.json();
+  console.log("Server: --- New POST /api/chat request received ---")
+  const { messages }: { messages: CoreMessage[] } = await req.json()
+  const filteredMessages = messages.filter((m) => m.role !== "tool")
+  const lastMessageContent = filteredMessages[filteredMessages.length - 1]?.content || ""
 
-    const filteredMessages = messages.filter(m => m.role !== 'tool');
+  // Detect language based on the last message
+  let lang = "fr" // Default to French
+  if (/[a-zA-Z]/.test(lastMessageContent) && !/[\u0600-\u06FF]/.test(lastMessageContent)) {
+    lang = "en" // Contains Latin characters but no Arabic, assume English
+  } else if (/[\u0600-\u06FF]/.test(lastMessageContent)) {
+    lang = "ar" // Contains Arabic characters
+  }
+  console.log(`Server: Detected language: ${lang}`)
 
-    const lang = /[\u0600-\u06FF]/.test(filteredMessages[filteredMessages.length - 1]?.content as string) ? "ar" : "fr";
+  // Unified System Prompt for all languages
+  const systemPrompt = `You are an expert assistant for the "Mafqoodat" platform, specializing in lost and found items in Morocco.
+**VERY IMPORTANT: ALL YOUR RESPONSES, WITHOUT EXCEPTION (including greetings, questions, tool results, and no-results messages), MUST BE ENTIRELY IN THE LANGUAGE OF THE USER'S LAST MESSAGE (Arabic, French, or English).**
 
-    const systemPrompts = {
-        fr: `Tu es un assistant expert pour "Mafqoodat". Ton rôle est d'aider les utilisateurs à retrouver des objets perdus ou trouvés.
-- Si l'utilisateur pose une question générale, demande un conseil, écrit un texte sans rapport avec un objet perdu/trouvé, ou envoie un message vide ou un simple point, réponds normalement comme un assistant conversationnel, **sans utiliser d'outil**.
-- **Priorité 1: Recherche d'objet.** Si tu identifies ne serait-ce qu'un "item" (objet) dans la requête de l'utilisateur, **utilise immédiatement l'outil 'searchDatabase' avec cet item et toute autre information disponible (ville, couleur, marque, etc.)**. Ne demande pas de détails supplémentaires si un item est déjà identifié.
-- **Gestion des résultats de recherche:**
-    - Si l'outil 'searchDatabase' retourne **plusieurs résultats**, présente-les en Markdown et dis à l'utilisateur : "J'ai trouvé plusieurs objets correspondants. Veuillez les examiner pour voir si l'un d'eux correspond au vôtre."
-    - Si l'outil 'searchDatabase' retourne **un seul résultat**, présente-le en Markdown et dis à l'utilisateur : "J'ai trouvé un objet qui pourrait correspondre. Le voici :"
-    - Si l'outil 'searchDatabase' ne retourne **aucun résultat**, propose de créer une annonce avec ce lien Markdown EXACT : [Créer une nouvelle annonce](action:create_ad)
-- **Priorité 2: Clarification.** Si la requête ne contient pas d'item clair, mais semble être une recherche (ex: "J'ai perdu quelque chose"), demande poliment le type d'objet.
-- Ne fais jamais de recherche pour un message vide, un point, ou une question générale.
-- Si c'est une conversation générale (salut, merci...), réponds naturellement sans utiliser l'outil.`,
-        ar: `أنت مساعد خبير لمنصة "مفقودات". دورك هو مساعدة المستخدمين في إيجاد الأشياء المفقودة أو المعثور عليها.
-- إذا طرح المستخدم سؤالاً عاماً أو طلب نصيحة أو كتب نصاً لا علاقة له بشيء مفقود/معثور عليه، أو أرسل رسالة فارغة أو نقطة فقط، **أجب كمساعد عادي ولا تستخدم أي أداة**.
-- **الأولوية 1: البحث عن شيء.** إذا تعرفت على "item" (غرض) واحد فقط في طلب المستخدم، **استخدم على الفور أداة 'searchDatabase' مع هذا الغرض وأي معلومات أخرى متاحة (المدينة، اللون، العلامة التجارية، إلخ)**. لا تطلب تفاصيل إضافية إذا تم تحديد الغرض بالفعل.
-- **إدارة نتائج البحث:**
-    - إذا أعادت أداة 'searchDatabase' **عدة نتائج**، قم بعرضها بتنسيق Markdown وقل للمستخدم: "لقد وجدت عدة أغراض مطابقة. يرجى مراجعتها لمعرفة ما إذا كان أي منها يطابق غرضك."
-    - إذا أعادت أداة 'searchDatabase' **نتيجة واحدة فقط**، قم بعرضها بتنسيق Markdown وقل للمستخدم: "لقد وجدت غرضًا واحدًا قد يطابق. إليك هو:"
-    - إذا لم تعد أداة 'searchDatabase' **أي نتائج**، اقترح إنشاء إعلان بهذا الرابط بالماركدون: [إنشاء إعلان جديد](action:create_ad)
-- **الأولوية 2: توضيح.** إذا لم يحتوي الطلب على غرض واضح، ولكنه يبدو وكأنه بحث (مثال: "فقدت شيئًا ما")، اطلب نوع الغرض بلطف.
-- لا تستخدم الأداة أبداً لرسالة فارغة أو نقطة أو نص غير ذي صلة.
-- إذا كانت محادثة عامة (تحية، شكر...)، أجب بشكل طبيعي دون استخدام الأداة.`,
-        en: `You are an expert assistant for "Mafqoodat". Your role is to help users find lost or found items.
-- If the user asks a general question, requests advice, writes something unrelated to a lost/found item, or sends an empty message or just a dot, **respond as a normal assistant and DO NOT use any tool**.
-- **Priority 1: Object Search.** If you identify at least an "item" (objet) in the user's request, **use immediately the 'searchDatabase' tool with this item and any other available information (city, color, brand, etc.)**. Do not ask for additional details if an item is already identified.
-- **Search Results Management:**
-    - If the 'searchDatabase' tool returns **multiple results**, present them in Markdown and tell the user: "I found several matching items. Please review them to see if any match yours."
-    - If the 'searchDatabase' tool returns **a single result**, present it in Markdown and tell the user: "I found one item that might match. Here it is:"
-    - If the 'searchDatabase' tool returns **no results**, suggest creating an ad with this exact Markdown link: [Create a new ad](action:create_ad)
-- **Priority 2: Clarification.** If the request does not contain a clear item, but seems to be a search (e.g., "I lost something"), politely ask for the type of object.
-- Never use the tool for empty, short, or irrelevant input.
-- For general conversation (hello, thanks, etc.), respond naturally without using the tool.`
-    };
+Here's how you should operate:
 
+🟢 **1. General Conversation:** If the user's message is a general greeting, thank you, a question about your capabilities, an empty message, or unrelated, respond naturally and politely in their detected language, **without using any tool**.
+
+🔎 **2. Search Intent:** If the user's message clearly mentions an object (even a single word like "phone", "wallet", "dog", "هاتف", "محفظة", "كلب", "téléphone", "sac", "chien"), assume it's a search query.
+  - **Immediately use the 'searchDatabase' tool.**
+  - **Extract ALL relevant information** (item, city, brand, color) from the user's message and pass it to the tool. **Translate these parameters to French before sending them to the tool**, as the database expects French terms.
+  - Do **NOT** ask for additional details if the item is already clear from the user's input.
+  - **ALWAYS follow a tool call with a text response, even if it's just to acknowledge the search.**
+
+📄 **3. Processing Search Results (after tool execution):** Once you receive the results from 'searchDatabase':
+  - **Analyze the results in relation to the user's original query.**
+  - **If items are found:**
+      - Start your response with a phrase like "I found several items that might match. Please review them:" (or its equivalent in French/Arabic, depending on the detected language).
+      - Present the found items clearly in Markdown format. **Translate all item details (description, city, category, brand, model, color, type, state, postdate) from French (as returned by the tool) to the user's detected language.**
+      - If the search results don't perfectly match all details the user provided (e.g., user asked for "red phone", but results only show "phone"), acknowledge this discrepancy in your response. For example, "I found phones, but none specifically red. Would you like to broaden the search or post an ad?" (or its equivalent in French/Arabic).
+  - **If no items are found:**
+      - Clearly state that no matching items were found (in the detected language).
+      - Suggest that the user can create a new ad for their lost item. Provide the link: [Create a new ad](action:create_ad) (or its equivalent in French/Arabic).
+
+❓ **4. Unclear Search Intent:** If the user seems to be searching but doesn't clearly mention an item, politely ask: "What kind of item did you lose?" (or its equivalent in French/Arabic).
+
+🚫 **5. Avoid Unnecessary Actions:** Never trigger a search or use tools if the message is empty, meaningless, or completely unrelated to lost and found items. Just reply as a normal assistant.
+`
+
+  // Prepare messages for the AI model
+  let messagesForAI: CoreMessage[] = [...filteredMessages]
+
+  // If this is the very first user message (i.e., only one message in history, and it's from the user)
+  // We prepend an assistant greeting to guide the conversation.
+  if (filteredMessages.length === 1 && filteredMessages[0].role === "user") {
+    const greeting = {
+      fr: "Bonjour ! Comment puis-je vous aider à retrouver votre objet perdu ?",
+      ar: "مرحباً! كيف يمكنني مساعدتك في العثور على غرضك المفقود؟",
+      en: "Hello! How can I assist you in finding your lost item?",
+    }
+    messagesForAI = [{ role: "assistant", content: greeting[lang] }, ...filteredMessages]
+    console.log("Server: Prepended initial greeting.")
+  }
+
+  console.log("Server: Messages sent to AI:", JSON.stringify(messagesForAI, null, 2)) // Detailed log
+
+  try {
+    console.log("Server: 🟤 streamText START - Calling AI model...")
     const result = await streamText({
         model: openai("gpt-4o"),
-        system: systemPrompts[lang],
-        messages: filteredMessages, 
+      system: systemPrompt, // Use the unified system prompt
+      messages: messagesForAI, // Use the potentially modified messages array
         tools: {
           searchDatabase: {
-            description: "Recherche les objets perdus dans la base de données.",
+          description:
+            "Recherche les objets perdus. Utiliser dès que l'utilisateur exprime une intention de recherche.",
             parameters: z.object({
-              item: z.string(), city: z.string().optional(), brand: z.string().optional(), color: z.string().optional(),
-            }),
-            execute: async (args) => await searchDatabase(args),
+            item: z.string().describe("The item to search for, translated to French."),
+            city: z.string().optional().describe("The city to search in, translated to French."),
+            brand: z.string().optional().describe("The brand of the item, translated to French."),
+            color: z.string().optional().describe("The color of the item, translated to French."),
+          }),
+          execute: async (args) => {
+            console.log("Server: 🟣 Tool execute START - Calling searchDatabase...")
+            const toolResult = await searchDatabase(args)
+            console.log(
+              "Server: 🟠 Tool execute END - Result from searchDatabase:",
+              JSON.stringify(toolResult).substring(0, 100) + "...",
+            ) // Log tool result
+            return toolResult
           },
         },
-    });
+      },
+    })
+    console.log("Server: ⚫ streamText END - Result object obtained from AI model.")
+    // This log will show if `result` is a valid stream object before conversion
+    console.log("Server: Stream result object structure:", {
+      type: typeof result,
+      hasToDataStreamResponse: typeof result.toDataStreamResponse === "function",
+      // Add other properties if needed for debugging
+    })
 
-    return result.toAIStreamResponse();
+    const response = result.toDataStreamResponse()
+    console.log("Server: 🔵 After toDataStreamResponse() - Stream initiated for client. Returning response.")
+    return response
+  } catch (error) {
+    console.error("Server: ❌ streamText error caught:", error)
+    // It's crucial to return a proper error response if streaming fails
+    return NextResponse.json({ error: "Failed to generate AI response" }, { status: 500 })
+  } finally {
+    console.log("Server: --- POST /api/chat request processing finished ---")
+  }
 }
