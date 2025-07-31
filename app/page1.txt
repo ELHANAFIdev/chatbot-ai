@@ -39,7 +39,7 @@ interface MissingPerson {
   contactUrl: string
 }
 
-// MODIFIED: The contact button now only shows if a contactUrl exists.
+// Composant pour afficher la carte d'un objet trouvé
 const MissingPersonCard = ({ person }: { person: MissingPerson }) => {
   const handleContact = () => window.open(person.contactUrl, "_blank", "noopener,noreferrer")
 
@@ -77,26 +77,23 @@ const MissingPersonCard = ({ person }: { person: MissingPerson }) => {
             <span>Posté le: {new Date(person.postdate).toLocaleDateString()}</span>
           </div>
         )}
-        {/* MODIFIED: Conditionally render the contact button only if a URL is provided */}
-        {person.contactUrl && (
-          <div className="pt-3 border-t border-gray-200 mt-2">
-            <Button
-              onClick={handleContact}
-              className="w-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2 group"
-            >
-              <Phone className="h-4 w-4" />
-              Contacter le Trouveur
-              <ExternalLink className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
-        )}
+        <div className="pt-3 border-t border-gray-200 mt-2">
+          <Button
+            onClick={handleContact}
+            className="w-full bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2 group"
+          >
+            <Phone className="h-4 w-4" />
+            Contacter le Trouveur
+            <ExternalLink className="h-4 w-4 ml-1" />
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
 }
 
-// Chat component as a sidebar
-const AIChatSidebar = ({
+// Modale de Chat IA améliorée
+const AIChatModal = ({
   isOpen,
   onClose,
   messages,
@@ -116,35 +113,28 @@ const AIChatSidebar = ({
   setInput: (value: string) => void
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
-
+  
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
   const handlePostNewAd = () => window.open("https://mafqoodat.ma/post.php", "_blank", "noopener,noreferrer")
 
+  // Clear input after successful submission
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!input.trim() || isLoading) return
     
     handleSubmit(e)
+    // Clear input immediately after submission
     setInput("")
   }
-  
+
+  if (!isOpen) return null
+
   return (
-    <div
-      className={`fixed inset-0 z-50 transition-opacity duration-300 ${
-        isOpen ? "bg-black bg-opacity-50" : "pointer-events-none bg-opacity-0"
-      }`}
-      onClick={onClose}
-    >
-      {/* MODIFIED: Changed height, position, and added rounded corners + overflow-hidden */}
-      <div
-        className={`fixed top-4 right-4 h-[calc(100vh-2rem)] w-full max-w-md transform bg-white shadow-xl flex flex-col transition-transform duration-300 ease-in-out rounded-lg overflow-hidden ${
-          isOpen ? "translate-x-0" : "translate-x-full"
-        }`}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl h-[85vh] flex flex-col">
         <div
           className="flex items-center justify-between p-4 border-b text-white"
           style={{ backgroundColor: "#C2252E" }}
@@ -288,7 +278,7 @@ const Dashboard = ({ onClose }: { onClose: () => void }) => (
 
 // Composant principal de la page
 export default function HomePage() {
-  const [isChatOpen, setChatOpen] = useState(false)
+  const [showAIModal, setShowAIModal] = useState(false)
   const [showSearchForm, setShowSearchForm] = useState(false)
   const [showDashboard, setShowDashboard] = useState(false)
 
@@ -307,7 +297,7 @@ export default function HomePage() {
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-red-50">
       <div className="fixed bottom-6 right-6 z-40 space-y-3">
         <button
-          onClick={() => setChatOpen(true)}
+          onClick={() => setShowAIModal(true)}
           className="text-white p-4 rounded-full shadow-lg transition-all duration-300 hover:scale-105 flex items-center space-x-2 group"
           style={{ backgroundColor: "#C2252E" }}
           title="Chat avec l'Assistant IA"
@@ -317,9 +307,9 @@ export default function HomePage() {
         </button>
       </div>
 
-      <AIChatSidebar
-        isOpen={isChatOpen}
-        onClose={() => setChatOpen(false)}
+      <AIChatModal
+        isOpen={showAIModal}
+        onClose={() => setShowAIModal(false)}
         messages={messages}
         input={input}
         handleInputChange={handleInputChange}

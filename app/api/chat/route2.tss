@@ -1,0 +1,231 @@
+import { streamText, type CoreMessage } from "ai"
+import { openai } from "@ai-sdk/openai"
+import { z } from "zod"
+import { query } from "@/lib/db"
+import { NextResponse } from "next/server"
+
+export const maxDuration = 30
+
+// ðŸ” Fonction de recherche directe
+async function searchDatabase(args: {
+  item: string
+  brand?: string
+  color?: string
+  city?: string
+}) {
+  console.log("Server: ðŸ”µ searchDatabase START", args)
+  try {
+    // Construction des mots-clÃ©s (l'IA est maintenant chargÃ©e de les fournir en franÃ§ais)
+    let allKeywords: string[] = []
+    if (args.item) allKeywords.push(...args.item.toLowerCase().split(" "))
+    if (args.brand) allKeywords.push(args.brand.toLowerCase())
+    if (args.color) allKeywords.push(args.color.toLowerCase())
+    allKeywords = [...new Set(allKeywords.filter((w) => w.length > 2))]
+    console.log(`Server: ðŸ§  Combined search keywords (French): [${allKeywords.join(", ")}]`)
+
+    const whereConditions: string[] = []
+    const params: string[] = []
+
+    allKeywords.forEach((keyword) => {
+      whereConditions.push(`LOWER(f.discription) LIKE ?`)
+      params.push(`%${keyword}%`)
+    })
+
+    if (args.city) {
+      whereConditions.push(`LOWER(v.ville) LIKE ?`)
+      params.push(`%${args.city.toLowerCase()}%`)
+    }
+
+    if (whereConditions.length === 0) {
+      console.log("Server: âš ï¸ No search conditions, returning empty results.")
+      return []
+    }
+
+    const sql = `
+      SELECT
+        f.id, f.discription as description, v.ville as city, c.cname as category_name,
+        f.marque, f.modele, f.color, f.type, f.etat, f.postdate
+      FROM fthings f
+             LEFT JOIN catagoery c ON f.cat_ref = c.cid
+             LEFT JOIN ville v ON f.ville = v.id
+      WHERE ${whereConditions.join(" AND ")}
+      ORDER BY f.postdate DESC LIMIT 5;
+    `
+
+    console.log("Server: ðŸ” Executing SQL:", sql.trim().replace(/\s+/g, " "))
+    console.log("Server: ðŸ“¦ With params:", params)
+
+    const results = await query(sql, params) as any[]
+    console.log("Server: ðŸŸ¢ searchDatabase END - Rows found:", Array.isArray(results) ? results.length : 0)
+
+    return Array.isArray(results)
+        ? results.map((item: any) => ({
+          ...item,
+          id: String(item.id),
+          contactUrl: `https://mafqoodat.ma/trouve.php?contact=${item.id}`,
+        }))
+        : []
+  } catch (error) {
+    console.error("Server: âŒ Database search error:", error)
+    return []
+  }
+}
+
+// âœ… Le point d'entrÃ©e principal
+export async function POST(req: Request) {
+  console.log("Server: --- New POST /api/chat request received ---")
+  const { messages }: { messages: CoreMessage[] } = await req.json()
+  const filteredMessages = messages.filter((m) => m.role !== "tool")
+  const lastMessage = filteredMessages[filteredMessages.length - 1]
+  const lastMessageContent = lastMessage
+      ? (typeof lastMessage.content === 'string'
+              ? lastMessage.content
+              : lastMessage.content.map(part =>
+                  'text' in part ? part.text : ''
+              ).join(' ')
+      )
+      : ""
+
+  // Detect language based on the last message
+  let lang: 'fr' | 'en' | 'ar' = "fr" // Default to French
+  if (/[a-zA-Z]/.test(lastMessageContent) && !/[\u0600-\u06FF]/.test(lastMessageContent)) {
+    lang = "en" // Contains Latin characters but no Arabic, assume English
+  } else if (/[\u0600-\u06FF]/.test(lastMessageContent)) {
+    lang = "ar" // Contains Arabic characters
+  }
+  console.log(`Server: Detected language: ${lang}`)
+
+  // Check if this is the very first user message (conversation starter)
+  const isFirstMessage = filteredMessages.length === 1 && filteredMessages[0].role === "user"
+
+  // Enhanced system prompt that includes greeting behavior
+  const systemPrompt = `CRITICAL RULE #1: After calling any tool, you MUST immediately provide a text response explaining the results. Do not wait for additional input.
+
+MANDATORY INSTRUCTION: You must ALWAYS provide text content in every response. Never send responses with only tool calls and empty text.
+
+You are an expert assistant for the "Mafqoodat" platform, specializing in lost and found items in Morocco.
+
+**CRITICAL: ALL YOUR RESPONSES MUST BE ENTIRELY IN THE LANGUAGE OF THE USER'S MESSAGE (Arabic, French, or English).**
+
+**ABSOLUTELY MANDATORY: After using ANY tool, you MUST ALWAYS provide a complete text response. NEVER return only tool results without text content. This is non-negotiable.**
+
+${isFirstMessage ? `**FIRST MESSAGE BEHAVIOR**: Since this is the user's first message, you should:
+1. Start with a brief, friendly greeting in their language
+2. If their message mentions any item (even a single word), IMMEDIATELY use the searchDatabase tool
+3. IMMEDIATELY after the tool execution, provide a complete text response with the results` : ''}
+
+**SEARCH EXECUTION PROTOCOL:**
+When you detect search intent:
+1. Call searchDatabase tool with extracted parameters
+2. Immediately after tool execution, analyze the results
+3. Provide a complete text response in the user's language that includes:
+   - Brief greeting if it's the first message
+   - Search results explanation
+   - Contact information for found items OR suggestion to create new ad
+4. NEVER stop after tool execution - always continue with text response
+
+**RESPONSE FORMAT REQUIREMENT:**
+Every response that uses a tool MUST include both:
+- Tool invocation (automatic)
+- Text explanation of results (MANDATORY)
+
+**EXAMPLE OF CORRECT RESPONSE FORMAT:**
+User: "I lost my bag in Rabat"
+Your response must include:
+1. Tool call to searchDatabase
+2. Text response like: "I searched for bags in Rabat. I found 2 matching items..." OR "No matching items were found for bags in Rabat. You can create a new ad..."
+
+**NEVER respond with only tool calls and empty text content.**
+
+Here's how you should operate:
+
+ðŸŸ¢ **1. General Conversation:** If the user's message is a general greeting, thank you, a question about your capabilities, or unrelated to lost items, respond naturally and politely in their detected language, **without using any tool**.
+
+ðŸ”Ž **2. Search Intent:** If the user's message mentions an object (even a single word like "phone", "wallet", "dog", "Ù‡Ø§ØªÙ", "Ù…Ø­ÙØ¸Ø©", "ÙƒÙ„Ø¨", "tÃ©lÃ©phone", "sac", "chien"), this is a search query:
+  - **Immediately use the 'searchDatabase' tool.**
+  - **Extract ALL relevant information** (item, city, brand, color) from the user's message and translate these parameters to French before sending them to the tool.
+  - **IMMEDIATELY after tool execution, provide a comprehensive text response with the search results. This is mandatory - do not send only tool results.**
+
+ðŸ“„ **3. Processing Search Results (MANDATORY after tool execution):**
+  - **ALWAYS analyze and present the results, even if the user's follow-up message is unclear or just punctuation.**
+  - **If items are found:**
+      - Start with: "I found items that might match. Please review them:" (or equivalent in the detected language).
+      - Present each item in Markdown format with these fields, translating all details to the user's language:
+        * **Description:** [translated description]
+        * **City:** [translated city]  
+        * **Category:** [translated category]
+        * **Brand:** [translated brand or "Unknown"]
+        * **Model:** [translated model or "Unbranded"] 
+        * **Color:** [translated color or "Not specified"]
+        * **Post Date:** [formatted date]
+        * **Contact Link:** [contactUrl with "Contact" as link text]
+
+  - **If no items are found:**
+      - Clearly state: "No matching items were found" (in the detected language).
+      - Always suggest: "You can create a new ad for your lost item: [Create a new ad](action:create_ad)"
+
+â“ **4. Unclear Search Intent:** If the user seems to be searching but doesn't mention a specific item, ask: "What kind of item did you lose?" (in the detected language).
+
+ðŸš« **5. Non-search Messages:** For empty, meaningless, or completely unrelated messages, respond as a helpful assistant without using tools.
+
+**REMEMBER: After ANY tool execution, you MUST provide a substantive response about the search results, regardless of what the user says next.**
+
+**FINAL RULE: NEVER, EVER send a response that contains only tool invocations without any text content. Always include explanatory text with your tool results.**`
+
+  // Use filtered messages directly - NO greeting prepending
+  const messagesForAI: CoreMessage[] = filteredMessages
+
+  console.log("Server: Messages sent to AI:", JSON.stringify(messagesForAI, null, 2))
+
+  try {
+    console.log("Server: ðŸŸ¤ streamText START - Calling AI model...")
+    const result = streamText({
+      model: openai("gpt-4o"),
+      system: systemPrompt,
+      messages: messagesForAI,
+      tools: {
+        searchDatabase: {
+          description: "Search for lost items in the database. Use immediately when user expresses search intent, even on first message. ALWAYS provide a complete text response after using this tool.",
+          parameters: z.object({
+            item: z.string().describe("The item to search for, translated to French."),
+            city: z.string().optional().describe("The city to search in, translated to French."),
+            brand: z.string().optional().describe("The brand of the item, translated to French."),
+            color: z.string().optional().describe("The color of the item, translated to French."),
+          }),
+          execute: async (args) => {
+            console.log("Server: ðŸŸ£ Tool execute START - Calling searchDatabase...")
+            const toolResult = await searchDatabase(args)
+            console.log(
+                "Server: ðŸŸ  Tool execute END - Result from searchDatabase:",
+                JSON.stringify(toolResult).substring(0, 200) + "..."
+            )
+            return toolResult
+          },
+        },
+      },
+      // Enhanced parameters for more reliable responses
+      maxTokens: 1000,
+      temperature: 0.1, // Lower temperature for more consistent behavior
+      // Ensure the model always provides text responses after tool usage
+      toolChoice: "auto",
+      maxSteps: 5, // Allow multiple steps to ensure completion
+      onStepFinish: (step) => {
+        console.log("Server: Step finished:", step.stepType)
+        if (step.stepType === 'tool-result') {
+          console.log("Server: Tool call completed, expecting text response next")
+        }
+      },
+      experimental_continueSteps: true, // Force continuation after tool calls
+    })
+
+    console.log("Server: âš« streamText END - Result object obtained from AI model.")
+    const response = result.toAIStreamResponse()
+    console.log("Server: ðŸ”µ After toDataStreamResponse() - Stream initiated for client. Returning response.")
+    return response
+  } catch (error) {
+    console.error("Server: âŒ streamText error caught:", error)
+    return NextResponse.json({ error: "Failed to generate AI response" }, { status: 500 })
+  } finally {
+    console.log("Server: --- POST /api/chat request processing finished ---")
+  }
+}
