@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useRef, useEffect } from "react"
-import { useChat, type Message } from "ai/react"
+import { useChat, type Message } from "@ai-sdk/react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import {
@@ -128,7 +128,6 @@ const AIChatSidebar = ({
     if (!input.trim() || isLoading) return
     
     handleSubmit(e)
-    setInput("")
   }
   
   return (
@@ -292,16 +291,65 @@ export default function HomePage() {
   const [showSearchForm, setShowSearchForm] = useState(false)
   const [showDashboard, setShowDashboard] = useState(false)
 
-  // Hook useChat avec configuration améliorée
-  const { messages, input, handleInputChange, handleSubmit, isLoading, setInput } = useChat({
-    api: "/api/chat",
-    onError: (error) => {
-      console.error("Chat error:", error)
-    },
-    onFinish: (message) => {
-      console.log("Chat finished:", message)
+  // Custom chat state management for non-streaming responses
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInput(e.target.value)
+  }
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!input.trim() || isLoading) return
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: input.trim()
     }
-  })
+
+    setMessages(prev => [...prev, userMessage])
+    setIsLoading(true)
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messages: [...messages, userMessage]
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: data.text
+      }
+
+      setMessages(prev => [...prev, assistantMessage])
+      setInput("") // Clear input after successful response
+    } catch (error) {
+      console.error("Chat error:", error)
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "Désolé, une erreur s'est produite. Veuillez réessayer."
+      }
+      setMessages(prev => [...prev, errorMessage])
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-red-50">
