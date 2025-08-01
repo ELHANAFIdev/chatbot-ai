@@ -43,7 +43,7 @@ async function searchDatabase(args: {
     const sql = `
       SELECT
         f.id, f.discription as description, v.ville as city, c.cname as category_name,
-        f.marque, f.modele, f.color, f.type, f.etat, f.postdate
+        f.marque as model, f.postdate
       FROM fthings f
              LEFT JOIN catagoery c ON f.cat_ref = c.cid
              LEFT JOIN ville v ON f.ville = v.id
@@ -70,130 +70,77 @@ async function searchDatabase(args: {
   }
 }
 
-// ✅ Le point d'entrée principal
+// ✅ Le point d'entrée principal (CORRIGÉ POUR AJOUTER LE BOUTON)
 export async function POST(req: Request) {
   console.log("Server: --- New POST /api/chat request received ---")
-  const { messages }: { messages: CoreMessage[] } = await req.json()
-  const filteredMessages = messages.filter((m) => m.role !== "tool")
-  const lastMessage = filteredMessages[filteredMessages.length - 1]
-  const lastMessageContent = lastMessage
-      ? (typeof lastMessage.content === 'string'
-              ? lastMessage.content
-              : lastMessage.content.map(part =>
-                  'text' in part ? part.text : ''
-              ).join(' ')
-      )
-      : ""
-
-  let lang: 'fr' | 'en' | 'ar' = "fr"
-  if (/[a-zA-Z]/.test(lastMessageContent) && !/[\u0600-\u06FF]/.test(lastMessageContent)) {
-    lang = "en"
-  } else if (/[\u0600-\u06FF]/.test(lastMessageContent)) {
-    lang = "ar"
-  }
-  console.log(`Server: Detected language: ${lang}`)
-  
-  const isFirstMessage = filteredMessages.length === 1 && filteredMessages[0].role === "user"
-
-  // CORRECTED: Escaped the inner backticks with a backslash `\`
-const systemPrompt = `You are a smart and friendly assistant working for "Mafqoodat", a lost and found platform in Morocco.
-
-🌍 **Languages**:
-- You speak **Moroccan Darija**, **French**, and **English**.
-You MUST respond only in this language: **${lang}**
-  - If user writes in Darija: respond in Darija.
-  - If French: respond in French.
-  - If Arabic (MSA): respond in Arabic.
-  - If English: respond in English.
-
-🎭 **Tone**:
-- Be warm, helpful, and human.
-- If the user asks something unrelated like "Do you know Ronaldo?", use humor and redirect:
- 
-
-🔁 **Main Workflow**:
-
-1. ✅ **Detect User Intent**:
-   - If the message contains a lost item ("sac", "bag", "حقيبة", "téléphone", "مفتاح", etc.), treat it as a **search request**.
-   - If the message is unclear (e.g., "ضاعت لي المحفظة" without details), ask for **more info** (city, color, brand...).
-   - If it's a greeting or casual message, **reply politely** without using any tools.
-
-2. 🔍 **Use the \`searchDatabase\` tool**:
-   - Only use it after collecting **enough details** (at least item + 1 other detail).
-   - Always **translate item, city, brand, and color to French** before calling the tool.
-
-3. 📋 **Present the Results**:
-   - After the tool runs, **always respond with a human explanation**.
-   - If items are found:
-     - Start with something like: "لقيت شي حوايج ممكن يكونوا ديالك:"
-     - Format each item in Markdown:
-       - **Description:** [translated]
-       - **City:** [translated]
-       - **Category:** [translated]
-       - **Brand:** [translated]
-       - **Color:** [translated]
-       - **Post Date:** [formatted]
-       - **Contact Link:** [Contact](contact_url)
-   - If no items are found:
-     - Say: "ما لقيتش شي حاجة كتشبه لهاد الوصف..."
-     - Suggest: "تقدر تزيد إعلان جديد هنا: [Create a new ad](action:create_ad)"
-
-🚀 ${isFirstMessage ? `**First Message Detected**:
-- Begin with a short friendly greeting in the user's language.
-- Then proceed to intent detection and the workflow above.` : ''}
-`;
-
-
-  const messagesForAI: CoreMessage[] = filteredMessages
-
-  console.log("Server: Messages sent to AI:", JSON.stringify(messagesForAI, null, 2))
 
   try {
-    console.log("Server: 🧠 streamText START - Calling AI model...")
-    const result = streamText({
+    const { messages }: { messages: CoreMessage[] } = await req.json()
+    const filteredMessages = messages.filter((m) => m.role !== "tool")
+    
+    const isFirstMessage = filteredMessages.length === 1 && filteredMessages[0].role === "user"
+
+    // === SYSTEM PROMPT AVEC INSTRUCTIONS POUR LE BOUTON "CRÉER UNE ANNONCE" ===
+    const systemPrompt = `You are a smart, multilingual assistant for "Mafqoodat" in Morocco.
+
+🌍 **Core Language Rule (NON-NEGOTIABLE)**:
+1.  **Detect the language** of the user's last message (French, Arabic, Moroccan Darija, or English).
+2.  You **MUST** reply **ONLY** in that detected language. This is your most important instruction.
+3.  This rule applies to everything: greetings, questions, and the labels for search results.
+
+🔁 **Main Workflow: Direct Search & Response**
+- If the user wants to find a lost item, use the \`searchDatabase\` tool.
+- **Tool Parameters**: Always translate search terms (item, city, etc.) to **French** before calling the tool.
+
+📋 **How to Present Results (One Single Message)**:
+- After the tool runs, generate **one single, complete message** in the user's language.
+- **DO NOT** say "I am searching" or "One moment".
+- **If items are found**: Start your response directly with an intro phrase (e.g., "J'ai trouvé...", "لقد وجدت..."), then list the results.
+- **If no items are found (CRITICAL INSTRUCTION)**:
+  - First, respond politely in the user's language that nothing was found.
+  - Then, on a new line, you **MUST** add a suggestion to create a new ad. This suggestion must be a Markdown link.
+  - **IMPORTANT**: Use this exact URL for the link: \`https://mafqoodat.ma/add.php\`
+  - The link text **MUST** be translated:
+    *   French: \`[Créer une nouvelle annonce](https://mafqoodat.ma/add.php)\`
+    *   Arabic: \`[إنشاء إعلان جديد](https://mafqoodat.ma/add.php)\`
+    *   English: \`[Create a new ad](https://mafqoodat.ma/add.php)\`
+
+🚀 ${isFirstMessage ? `**First Message**: Start with a short friendly greeting in the user's detected language.` : ''}
+`
+
+    const messagesForAI: CoreMessage[] = filteredMessages
+
+    const result = await streamText({
       model: openai("gpt-4o"),
       system: systemPrompt,
       messages: messagesForAI,
       tools: {
         searchDatabase: {
-          description: "Searches the database for lost items. Use this only after getting enough details from the user. Always translate search parameters to French.",
+          description: "Searches the database for lost items. Always translate search parameters to French.",
           parameters: z.object({
             item: z.string().describe("The item to search for, translated to French."),
             city: z.string().optional().describe("The city to search in, translated to French."),
             brand: z.string().optional().describe("The brand of the item, translated to French."),
             color: z.string().optional().describe("The color of the item, translated to French."),
           }),
-          execute: async (args) => {
-            console.log("Server: 🛠️ Tool execute START - Calling searchDatabase...")
-            const toolResult = await searchDatabase(args)
-            console.log(
-                "Server: 📦 Tool execute END - Result from searchDatabase:",
-                JSON.stringify(toolResult).substring(0, 200) + "..."
-            )
-            return toolResult
-          },
+          execute: async (args) => await searchDatabase(args),
         },
       },
-      maxTokens: 1000,
-      temperature: 0.1,
       toolChoice: "auto",
-      maxSteps: 5,
-      onStepFinish: (step) => {
-        console.log("Server: Step finished:", step.stepType)
-        if (step.stepType === 'tool-result') {
-          console.log("Server: Tool call completed, expecting text response next")
-        }
-      },
+      temperature: 0.1,
       experimental_continueSteps: true,
+      maxSteps: 5,
     })
 
-    console.log("Server: ✨ streamText END - Result object obtained from AI model.")
-    const response = result.toDataStreamResponse()
-    console.log("Server: ➡️ After toDataStreamResponse() - Stream initiated for client. Returning response.")
-    return response
-  } catch (error) {
-    console.error("Server: ❌ streamText error caught:", error)
-    return NextResponse.json({ error: "Failed to generate AI response" }, { status: 500 })
+    return result.toDataStreamResponse()
+
+  } catch (error)
+  {
+    console.error("Server: ❌ POST error caught:", error)
+    return NextResponse.json({
+      error: "Failed to generate AI response",
+      details: error instanceof Error ? error.message : String(error)
+    }, { status: 500 })
   } finally {
     console.log("Server: --- POST /api/chat request processing finished ---")
   }
