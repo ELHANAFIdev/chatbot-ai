@@ -1,9 +1,9 @@
-import { streamText, type CoreMessage } from "ai"
+import { streamText, generateText, type CoreMessage } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 import { query } from "@/lib/db"
 import { NextResponse } from "next/server"
-
+import { google } from "@ai-sdk/google"
 export const maxDuration = 30
 
 // 🔎 Fonction de recherche directe (No changes needed)
@@ -111,7 +111,7 @@ export async function POST(req: Request) {
     const messagesForAI: CoreMessage[] = filteredMessages
 
     const result = await streamText({
-      model: openai("gpt-4o"),
+      model: google('gemini-2.5-flash'),
       system: systemPrompt,
       messages: messagesForAI,
       tools: {
@@ -126,21 +126,17 @@ export async function POST(req: Request) {
           execute: async (args) => await searchDatabase(args),
         },
       },
-      toolChoice: "auto",
+      maxOutputTokens: 1000,
       temperature: 0.1,
-      experimental_continueSteps: true,
-      maxSteps: 5,
+      toolChoice: "auto",
     })
 
-    return result.toDataStreamResponse()
-
-  } catch (error)
-  {
-    console.error("Server: ❌ POST error caught:", error)
-    return NextResponse.json({
-      error: "Failed to generate AI response",
-      details: error instanceof Error ? error.message : String(error)
-    }, { status: 500 })
+    console.log("Server: ✨ generateText END - Result object obtained from AI model.")
+    console.log("Server: ➡️ Returning text response:", result.text)
+    return NextResponse.json({ text: result.text })
+  } catch (error) {
+    console.error("Server: ❌ generateText error caught:", error)
+    return NextResponse.json({ error: "Failed to generate AI response" }, { status: 500 })
   } finally {
     console.log("Server: --- POST /api/chat request processing finished ---")
   }
